@@ -85,6 +85,12 @@
   .drain { fill: var(--ink); pointer-events: none; }
   .source-plate { fill: var(--accent); stroke: var(--ink); stroke-width: 1; pointer-events: none; }
   .source-core { fill: var(--glow); pointer-events: none; }
+  .rock { fill: var(--stone-dark); stroke: var(--grout); stroke-width: 0.8; }
+  .rock-in { fill: var(--grout); opacity: 0.55; }
+  .pipe-tile.fixed .pipe-base { fill: var(--stone); }
+  .rivet { fill: var(--ink); opacity: 0.55; pointer-events: none; }
+  .bridge-base { fill: var(--bg-deep); stroke: var(--accent); stroke-width: 1.4; }
+  .bridge-gap { stroke: var(--bg-deep); fill: none; stroke-linecap: butt; pointer-events: none; }
 
   .drawer-backdrop { position: fixed; inset: 0; background: rgba(20, 14, 8, 0.25); opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 10; }
   .drawer-backdrop.open { opacity: 1; pointer-events: auto; }
@@ -379,7 +385,7 @@ function applyStylePalette(s) {
 
 function updateHint() {
   if (mode === 'pipes') {
-    hintEl.innerHTML = 'Tap to turn a pipe. Hold to lock it.<br/>Fill every pipe from the source.';
+    hintEl.innerHTML = 'Tap to turn a pipe. Hold to lock it.<br/>Fill every pipe. Route around rock.';
   } else if (mode === 'rush') {
     hintEl.innerHTML = 'Fill every pipe before time runs out.<br/>Each board you clear adds time.';
   } else if (mode === 'viz') {
@@ -1426,12 +1432,14 @@ function detectWangMatches() {
 }
 
 /* PIPE ENGINE (Pipes and Rush)
-   A random spanning tree is grown from the source tile, every tile is
-   scrambled, and the player turns tiles until flow reaches every pipe
-   with no open ends. */
-const P = { grid: 'square', n: 4, cols: 4, rows: 4, cells: [], map: new Map(), source: null, moves: 0, par: 0, level: 1, solved: false };
+   Any tiling (square, hex, triangle, octagon) is built as polygons, and
+   neighbors are found by matching shared edge midpoints. A random spanning
+   tree is grown with Kruskal so rocks and bridges can be worked in, then
+   every free tile is scrambled. */
+const P = { grid: 'square', cells: [], source: null, moves: 0, par: 0, level: 1, solved: false, bbox: null };
 const R = { time: 60, boards: 0, running: false, timer: null, last: 0 };
-let pipeProgress = store.get('atlas.pipes', { unlocked: 1, level: 1, stars: {} });
+let pipeProgress = store.get('atlas.pipes2', { unlocked: 1, level: 1, stars: {} });
+const PS = 100;
 
 function mulberry(seed) {
   return function () {
@@ -1441,8 +1449,6 @@ function mulberry(seed) {
     return ((t ^ t >>> 14) >>> 0) / 4294967296;
   };
 }
-function pipeNeighbor(c, r, e) { return P.grid === 'hex' ? hexNeighbor(c, r, e) : sqNeighbor(c, r, e); }
-function pipeOpp(e) { return P.grid === 'hex' ? (e + 3) % 6 : (e + 2) % 4; }
 function rotMask(mask, r, n) {
   let m = 0;
   for (let i = 0; i < n; i++) if (mask & (1 << i)) m |= 1 << ((i + r) % n);
@@ -1453,125 +1459,274 @@ function maskPeriod(mask, n) {
   return n;
 }
 function bitCount(m) { let c = 0; while (m) { c += m & 1; m >>= 1; } return c; }
-function pipeMask(cell) { return rotMask(cell.sol, cell.rot % P.n, P.n); }
+function pipeMask(cell) {
+  if (cell.rock) return 0;
+  if (cell.bridge) return 15;
+  return rotMask(cell.sol, cell.rot % cell.n, cell.n);
+}
 
-function generatePipes(grid, cols, rows, rand) {
-  P.grid = grid; P.n = grid === 'hex' ? 6 : 4; P.cols = cols; P.rows = rows;
-  P.cells = []; P.map = new Map(); P.moves = 0; P.solved = false;
-  const n = P.n;
-  for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
-    const cell = { c, r, sol: 0, rot: 0, locked: false, source: false };
-    P.cells.push(cell); P.map.set(c + ',' + r, cell);
-  }
-  const start = P.map.get(Math.floor(cols / 2) + ',' + Math.floor(rows / 2));
-  start.source = true; P.source = start;
-  const inTree = new Set([start]);
-  const frontier = [];
-  const addFrontier = cell => {
-    for (let e = 0; e < n; e++) {
-      const nb = pipeNeighbor(cell.c, cell.r, e);
-      const target = P.map.get(nb.col + ',' + nb.row);
-      if (target && !inTree.has(target)) frontier.push({ from: cell, to: target, e });
-    }
+function buildTiling(grid, cols, rows) {
+  const cells = [];
+  const add = (c, r, verts) => {
+    const cx = verts.reduce((s, v) => s + v.x, 0) / verts.length;
+    const cy = verts.reduce((s, v) => s + v.y, 0) / verts.length;
+    verts.sort((a, b) => Math.atan2(a.y - cy, a.x - cx) - Math.atan2(b.y - cy, b.x - cx));
+    cells.push({ c, r, cx, cy, verts, n: verts.length, sol: 0, rot: 0, locked: false, fixed: false, rock: false, bridge: false, source: false });
   };
-  addFrontier(start);
-  let skips = 0;
-  while (frontier.length) {
-    const i = Math.floor(rand() * frontier.length);
-    const f = frontier[i];
-    if (inTree.has(f.to)) { frontier[i] = frontier[frontier.length - 1]; frontier.pop(); continue; }
-    if (bitCount(f.from.sol) >= 3 && skips < 30) { skips++; continue; }
-    skips = 0;
-    frontier[i] = frontier[frontier.length - 1]; frontier.pop();
-    f.from.sol |= 1 << f.e;
-    f.to.sol |= 1 << pipeOpp(f.e);
-    inTree.add(f.to);
-    addFrontier(f.to);
+  if (grid === 'square') {
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = c * PS, y = r * PS;
+      add(c, r, [{ x, y }, { x: x + PS, y }, { x: x + PS, y: y + PS }, { x, y: y + PS }]);
+    }
+  } else if (grid === 'hex') {
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const p = hexToPixel(c, r, PS);
+      const v = []; for (let i = 0; i < 6; i++) v.push(hexVertex(p.x, p.y, PS, i));
+      add(c, r, v);
+    }
+  } else if (grid === 'tri') {
+    const h = PS * Math.sqrt(3) / 2;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const x = c * PS / 2, y = r * h;
+      if ((c + r) % 2 === 0) add(c, r, [{ x, y: y + h }, { x: x + PS / 2, y }, { x: x + PS, y: y + h }]);
+      else add(c, r, [{ x, y }, { x: x + PS, y }, { x: x + PS / 2, y: y + h }]);
+    }
+  } else if (grid === 'oct') {
+    const a = PS * (1 + Math.SQRT2);
+    const R8 = PS / (2 * Math.sin(Math.PI / 8));
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const v = [];
+      for (let k = 0; k < 8; k++) {
+        const ang = (22.5 + 45 * k) * Math.PI / 180;
+        v.push({ x: c * a + R8 * Math.cos(ang), y: r * a + R8 * Math.sin(ang) });
+      }
+      add(c, r, v);
+    }
+    const d = PS / Math.SQRT2;
+    for (let r = 0; r < rows - 1; r++) for (let c = 0; c < cols - 1; c++) {
+      const x = (c + 0.5) * a, y = (r + 0.5) * a;
+      add(c + 0.5, r + 0.5, [{ x: x + d, y }, { x, y: y + d }, { x: x - d, y }, { x, y: y - d }]);
+    }
   }
+  const mids = new Map();
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  cells.forEach((cell, i) => {
+    cell.idx = i; cell.nb = []; cell.mids = [];
+    cell.local = cell.verts.map(v => ({ x: v.x - cell.cx, y: v.y - cell.cy }));
+    cell.verts.forEach(v => { minX = Math.min(minX, v.x); minY = Math.min(minY, v.y); maxX = Math.max(maxX, v.x); maxY = Math.max(maxY, v.y); });
+    for (let e = 0; e < cell.n; e++) {
+      const A = cell.verts[e], B = cell.verts[(e + 1) % cell.n];
+      const mx = (A.x + B.x) / 2, my = (A.y + B.y) / 2;
+      cell.mids.push({ x: mx - cell.cx, y: my - cell.cy });
+      const key = Math.round(mx * 4) + ',' + Math.round(my * 4);
+      const o = mids.get(key);
+      if (o) { cell.nb[e] = { cell: o.cell, e: o.e }; o.cell.nb[o.e] = { cell, e }; }
+      else mids.set(key, { cell, e });
+    }
+    cell.inr = Math.min(...cell.mids.map(m => Math.hypot(m.x, m.y)));
+  });
+  P.bbox = { minX, minY, maxX, maxY };
+  return cells;
+}
+
+function liveConnected(cells) {
+  const live = cells.filter(c => !c.rock);
+  if (!live.length) return false;
+  const seen = new Set([live[0]]); const q = [live[0]];
+  while (q.length) {
+    const cur = q.shift();
+    cur.nb.forEach(nb => { if (nb && !nb.cell.rock && !seen.has(nb.cell)) { seen.add(nb.cell); q.push(nb.cell); } });
+  }
+  return seen.size === live.length;
+}
+
+function tryGenerate(cfg, rand) {
+  const cells = buildTiling(cfg.grid, cfg.cols, cfg.rows);
+  const bb = P.bbox, mx = (bb.minX + bb.maxX) / 2, my = (bb.minY + bb.maxY) / 2;
+  const src = cells.slice().sort((a, b) => (Math.hypot(a.cx - mx, a.cy - my) - (a.n >= 6 ? 1 : 0)) - (Math.hypot(b.cx - mx, b.cy - my) - (b.n >= 6 ? 1 : 0)))[0];
+  src.source = true;
+  const pick = list => list[Math.floor(rand() * list.length)];
+
+  for (let k = 0, tries = 0; k < (cfg.rocks || 0) && tries < 200; tries++) {
+    const cell = pick(cells);
+    if (cell.rock || cell.source) continue;
+    cell.rock = true;
+    if (!liveConnected(cells)) { cell.rock = false; continue; }
+    k++;
+  }
+  for (let k = 0, tries = 0; k < (cfg.bridges || 0) && tries < 300; tries++) {
+    const cell = pick(cells);
+    if (cell.n !== 4 || cell.rock || cell.source || cell.bridge) continue;
+    let ok = true;
+    for (let e = 0; e < 4; e++) {
+      const nb = cell.nb[e];
+      if (!nb || nb.cell.rock || nb.cell.bridge || nb.cell.source) { ok = false; break; }
+      if (nb.cell.nb.some(x => x && x.cell.bridge)) { ok = false; break; }
+    }
+    if (!ok) continue;
+    cell.bridge = true; k++;
+  }
+
+  const parent = new Map();
+  const find = x => { while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); } return x; };
+  const live = cells.filter(c => !c.rock && !c.bridge);
+  live.forEach(c => parent.set(c, c));
+  const link = (u, eu, v, ev) => { u.sol |= 1 << eu; v.sol |= 1 << ev; parent.set(find(u), find(v)); };
+
+  for (const b of cells.filter(c => c.bridge)) {
+    b.sol = 15;
+    for (let g = 0; g < 2; g++) {
+      const A = b.nb[g], B = b.nb[g + 2];
+      if (find(A.cell) === find(B.cell)) return null;
+      link(A.cell, A.e, B.cell, B.e);
+    }
+  }
+  const edges = [];
+  live.forEach(u => u.nb.forEach((nb, eu) => {
+    if (nb && !nb.cell.rock && !nb.cell.bridge && u.idx < nb.cell.idx) edges.push({ u, eu, v: nb.cell, ev: nb.e });
+  }));
+  for (let i = edges.length - 1; i > 0; i--) { const j = Math.floor(rand() * (i + 1)); [edges[i], edges[j]] = [edges[j], edges[i]]; }
+  const cap = c => c.n >= 8 ? 4 : 3;
+  for (let pass = 0; pass < 2; pass++) {
+    for (const ed of edges) {
+      if (find(ed.u) === find(ed.v)) continue;
+      if (pass === 0 && (bitCount(ed.u.sol) >= cap(ed.u) || bitCount(ed.v.sol) >= cap(ed.v))) continue;
+      link(ed.u, ed.eu, ed.v, ed.ev);
+    }
+  }
+  const root = find(live[0]);
+  if (live.some(c => find(c) !== root)) return null;
+
+  const free = live.filter(c => !c.source);
+  for (let k = 0; k < (cfg.fixed || 0) && free.length; k++) {
+    const i = Math.floor(rand() * free.length);
+    free[i].fixed = true; free.splice(i, 1);
+  }
+  return { cells, src };
+}
+
+function generatePipes(cfg, rand) {
+  let out = null;
+  for (let t = 0; t < 40 && !out; t++) out = tryGenerate(cfg, rand);
+  if (!out) out = tryGenerate(Object.assign({}, cfg, { rocks: 0, bridges: 0 }), rand);
+  P.grid = cfg.grid; P.cells = out.cells; P.source = out.src; P.moves = 0; P.solved = false;
   for (let tries = 0; tries < 20; tries++) {
     let par = 0;
     P.cells.forEach(cell => {
-      cell.rot = Math.floor(rand() * n);
-      const p = maskPeriod(cell.sol, n);
+      cell.rot = 0;
+      if (cell.rock || cell.bridge || cell.fixed) return;
+      cell.rot = Math.floor(rand() * cell.n);
+      const p = maskPeriod(cell.sol, cell.n);
       par += (p - (cell.rot % p)) % p;
     });
     P.par = par;
-    if (par > Math.min(3, P.cells.length) && !pipeState().solved) break;
+    if (par > 3 && !pipeState().solved) break;
   }
 }
 
 function pipeState() {
-  const depth = new Map([[P.source, 0]]);
-  const q = [P.source];
+  const depth = new Map();
+  const nodeKey = (cell, g) => cell.idx + ':' + g;
+  const start = nodeKey(P.source, 0);
+  depth.set(start, 0);
+  const q = [[P.source, 0]];
   while (q.length) {
-    const cur = q.shift();
+    const [cur, g] = q.shift();
+    const d = depth.get(nodeKey(cur, g));
     const m = pipeMask(cur);
-    for (let e = 0; e < P.n; e++) {
-      if (!(m & (1 << e))) continue;
-      const nb = pipeNeighbor(cur.c, cur.r, e);
-      const nc = P.map.get(nb.col + ',' + nb.row);
-      if (!nc || depth.has(nc)) continue;
-      if (!(pipeMask(nc) & (1 << pipeOpp(e)))) continue;
-      depth.set(nc, depth.get(cur) + 1);
-      q.push(nc);
+    const exits = cur.bridge ? [g, g + 2] : [...Array(cur.n).keys()].filter(e => m & (1 << e));
+    for (const e of exits) {
+      const nb = cur.nb[e];
+      if (!nb || !(pipeMask(nb.cell) & (1 << nb.e))) continue;
+      const ng = nb.cell.bridge ? nb.e % 2 : 0;
+      const k = nodeKey(nb.cell, ng);
+      if (depth.has(k)) continue;
+      depth.set(k, d + 1);
+      q.push([nb.cell, ng]);
     }
   }
-  let leaks = 0;
+  let leaks = 0, need = 0;
   P.cells.forEach(cell => {
+    if (cell.rock) return;
+    need += cell.bridge ? 2 : 1;
     const m = pipeMask(cell);
-    for (let e = 0; e < P.n; e++) {
+    for (let e = 0; e < cell.n; e++) {
       if (!(m & (1 << e))) continue;
-      const nb = pipeNeighbor(cell.c, cell.r, e);
-      const nc = P.map.get(nb.col + ',' + nb.row);
-      if (!nc || !(pipeMask(nc) & (1 << pipeOpp(e)))) leaks++;
+      const nb = cell.nb[e];
+      if (!nb || !(pipeMask(nb.cell) & (1 << nb.e))) leaks++;
     }
   });
-  return { depth, leaks, solved: depth.size === P.cells.length && leaks === 0 };
+  return { depth, leaks, solved: depth.size === need && leaks === 0 };
 }
 
 function pipeTransform(cell, animate) {
-  const step = 360 / P.n;
+  if (!cell.el) return;
   cell.el.style.transition = animate ? '' : 'none';
-  cell.el.setAttribute('transform', `translate(${cell.cx} ${cell.cy}) rotate(${cell.rot * step})`);
+  cell.el.setAttribute('transform', `translate(${cell.cx} ${cell.cy}) rotate(${cell.rot * 360 / cell.n})`);
   if (!animate) { void cell.el.getBoundingClientRect(); cell.el.style.transition = ''; }
+}
+
+function polyPoints(pts, s = 1) { return pts.map(p => (p.x * s).toFixed(2) + ',' + (p.y * s).toFixed(2)).join(' '); }
+
+function drawPipe(parent, waterG, ends, deg, hubScale, widthBoost = 1) {
+  [['pc', 36], ['pi', 24], ['pw', 13]].forEach(([cls, w]) => {
+    w *= widthBoost;
+    const target = cls === 'pw' ? waterG : parent;
+    ends.forEach(p => target.appendChild(svgEl('line', { x1: 0, y1: 0, x2: p.x, y2: p.y, class: cls + '-l', 'stroke-width': w })));
+    if (deg > 0) target.appendChild(svgEl('circle', { r: deg === 1 ? w * 0.9 * hubScale : w / 2, class: cls + '-c' }));
+  });
 }
 
 function renderPipes() {
   board.innerHTML = '';
   board.classList.toggle('solved', P.solved);
-  const T = fitBoard(P.grid, P.cols, P.rows);
-  TILE_SIZE = T;
-  const W = P.grid === 'hex' ? T * Math.sqrt(3) : T;
+  const bb = P.bbox, pad = 14;
+  board.setAttribute('viewBox', `${bb.minX - pad} ${bb.minY - pad} ${bb.maxX - bb.minX + pad * 2} ${bb.maxY - bb.minY + pad * 2}`);
+  board.setAttribute('preserveAspectRatio', 'xMidYMid meet');
   P.cells.forEach(cell => {
-    const pos = P.grid === 'hex' ? hexToPixel(cell.c, cell.r, T) : { x: cell.c * T + T / 2, y: cell.r * T + T / 2 };
-    cell.cx = pos.x; cell.cy = pos.y;
-    const g = svgEl('g', { class: 'tile-group pipe-tile' + (cell.locked ? ' locked' : '') });
-    g.appendChild(P.grid === 'hex'
-      ? svgEl('polygon', { points: hexPolygon(T), class: 'pipe-base' })
-      : svgEl('rect', { x: -T / 2, y: -T / 2, width: T, height: T, class: 'pipe-base' }));
+    const pts = polyPoints(cell.local);
+    if (cell.rock) {
+      const g = svgEl('g', { transform: `translate(${cell.cx} ${cell.cy})` });
+      g.appendChild(svgEl('polygon', { points: pts, class: 'rock' }));
+      g.appendChild(svgEl('polygon', { points: polyPoints(cell.local, 0.55), class: 'rock-in' }));
+      board.appendChild(g);
+      cell.el = null; cell.waterGs = [];
+      return;
+    }
+    const boost = cell.n === 3 ? 0.62 : 1;
+    const hubScale = Math.min(1, (cell.inr * 0.8) / (36 * boost * 0.9));
+    if (cell.bridge) {
+      const g = svgEl('g', { class: 'pipe-tile', transform: `translate(${cell.cx} ${cell.cy})` });
+      g.appendChild(svgEl('polygon', { points: pts, class: 'pipe-base bridge-base' }));
+      const wg0 = svgEl('g', { class: 'water' }), wg1 = svgEl('g', { class: 'water' });
+      const ln = (a, b, cls, w, tgt) => tgt.appendChild(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: cls, 'stroke-width': w }));
+      const m = cell.mids;
+      ln(m[0], m[2], 'pc-l', 36, g); ln(m[0], m[2], 'pi-l', 24, g); ln(m[0], m[2], 'pw-l', 13, wg0); g.appendChild(wg0);
+      ln(m[1], m[3], 'bridge-gap', 54, g); ln(m[1], m[3], 'pc-l', 36, g); ln(m[1], m[3], 'pi-l', 24, g); ln(m[1], m[3], 'pw-l', 13, wg1); g.appendChild(wg1);
+      board.appendChild(g);
+      cell.el = null; cell.waterGs = [wg0, wg1];
+      return;
+    }
+    const g = svgEl('g', { class: 'tile-group pipe-tile' + (cell.locked ? ' locked' : '') + (cell.fixed ? ' fixed' : '') });
+    g.appendChild(svgEl('polygon', { points: pts, class: 'pipe-base' }));
+    if (cell.fixed) cell.local.forEach(v => g.appendChild(svgEl('circle', { cx: v.x * 0.78, cy: v.y * 0.78, r: 3.5, class: 'rivet' })));
     const ends = [];
-    for (let e = 0; e < P.n; e++) if (cell.sol & (1 << e)) ends.push(P.grid === 'hex' ? hexEdgeMid(0, 0, T, e) : sqEdgeMid(T, e));
+    for (let e = 0; e < cell.n; e++) if (cell.sol & (1 << e)) ends.push(cell.mids[e]);
     const deg = ends.length;
     const waterG = svgEl('g', { class: 'water' });
-    [['pc', 0.34], ['pi', 0.22], ['pw', 0.12]].forEach(([cls, w]) => {
-      const parent = cls === 'pw' ? waterG : g;
-      ends.forEach(p => parent.appendChild(svgEl('line', { x1: 0, y1: 0, x2: p.x, y2: p.y, class: cls + '-l', 'stroke-width': W * w })));
-      const hubR = deg === 1 ? W * w * 0.9 : W * w / 2;
-      parent.appendChild(svgEl('circle', { r: hubR, class: cls + '-c' }));
-    });
+    drawPipe(g, waterG, ends, deg, hubScale, boost);
     g.appendChild(waterG);
     if (cell.source) {
-      g.appendChild(svgEl('rect', { x: -W * 0.2, y: -W * 0.2, width: W * 0.4, height: W * 0.4, rx: W * 0.06, class: 'source-plate' }));
-      g.appendChild(svgEl('circle', { r: W * 0.09, class: 'source-core' }));
+      const half = Math.min(20, cell.inr * 0.5);
+      g.appendChild(svgEl('rect', { x: -half, y: -half, width: half * 2, height: half * 2, rx: half * 0.3, class: 'source-plate' }));
+      g.appendChild(svgEl('circle', { r: half * 0.45, class: 'source-core' }));
     } else if (deg === 1) {
-      g.appendChild(svgEl('circle', { r: W * 0.045, class: 'drain' }));
+      g.appendChild(svgEl('circle', { r: 4.5 * hubScale, class: 'drain' }));
     }
-    const hit = P.grid === 'hex'
-      ? svgEl('polygon', { points: hexPolygon(T), class: 'tile-hit' })
-      : svgEl('rect', { x: -T / 2, y: -T / 2, width: T, height: T, class: 'tile-hit' });
+    const hit = svgEl('polygon', { points: pts, class: 'tile-hit' });
     g.appendChild(hit);
     board.appendChild(g);
-    cell.el = g; cell.waterG = waterG;
+    cell.el = g; cell.waterGs = [waterG];
     pipeTransform(cell, false);
 
     let pressTimer = null;
@@ -1579,7 +1734,7 @@ function renderPipes() {
       ev.preventDefault();
       pressTimer = setTimeout(() => {
         pressTimer = null;
-        if (P.solved) return;
+        if (P.solved || cell.fixed) return;
         cell.locked = !cell.locked;
         g.classList.toggle('locked', cell.locked);
         if (navigator.vibrate) navigator.vibrate(15);
@@ -1599,17 +1754,19 @@ function renderPipes() {
 function showFlow() {
   const st = pipeState();
   P.cells.forEach(cell => {
-    const d = st.depth.get(cell);
-    const on = d !== undefined;
-    cell.waterG.style.transitionDelay = on ? (d * 28) + 'ms' : '0ms';
-    cell.waterG.classList.toggle('on', on);
+    (cell.waterGs || []).forEach((wg, g) => {
+      const d = st.depth.get(cell.idx + ':' + g);
+      const on = d !== undefined;
+      wg.style.transitionDelay = on ? (d * 28) + 'ms' : '0ms';
+      wg.classList.toggle('on', on);
+    });
   });
   return st;
 }
 
 let flowTimer = null;
 function tapPipe(cell) {
-  if (P.solved || cell.locked) return;
+  if (P.solved || cell.locked || cell.fixed) return;
   if (mode === 'rush' && !R.running) return;
   cell.rot++;
   P.moves++;
@@ -1632,7 +1789,7 @@ function pipesSolved() {
     pipeProgress.stars[P.level] = Math.max(prev, stars);
     pipeProgress.unlocked = Math.max(pipeProgress.unlocked, P.level + 1);
     pipeProgress.level = P.level + 1;
-    store.set('atlas.pipes', pipeProgress);
+    store.set('atlas.pipes2', pipeProgress);
     setTimeout(() => {
       showOverlay(`Level ${P.level} clear`, '★'.repeat(stars) + '☆'.repeat(3 - stars),
         `${P.moves} moves, par ${P.par}.<br/>Three stars means par or better.`,
@@ -1648,34 +1805,61 @@ function pipesSolved() {
 }
 
 /* CHALLENGE LEVELS */
+const LEVELS = {
+  1: { grid: 'square', cols: 4, rows: 4 },
+  2: { grid: 'square', cols: 4, rows: 5 },
+  3: { grid: 'hex', cols: 4, rows: 5, title: 'Hex pipes', intro: 'Six sides now. Each tap turns a tile one sixth of a turn.' },
+  4: { grid: 'square', cols: 5, rows: 6, rocks: 3, title: 'Rocks', intro: 'Dark tiles are rock. No pipe can pass through them, so you have to route around.' },
+  5: { grid: 'tri', cols: 9, rows: 5, title: 'Triangle pipes', intro: 'Triangles only point three ways, so every turn counts.' },
+  6: { grid: 'hex', cols: 5, rows: 6, rocks: 3 },
+  7: { grid: 'square', cols: 5, rows: 6, bridges: 1, title: 'Bridges', intro: 'A bridge carries two pipes straight across each other without mixing. Both crossings have to carry flow.' },
+  8: { grid: 'oct', cols: 3, rows: 4, title: 'Octagons', intro: 'Big octagons turn in eighths. The small diamonds between them turn in quarters.' },
+  9: { grid: 'square', cols: 6, rows: 7, rocks: 3, bridges: 1, fixed: 3, title: 'Pinned tiles', intro: 'Tiles with rivets are pinned in the right position. Use them as clues.' }
+};
 function levelConfig(lv) {
-  if (lv % 3 === 0) {
-    const cols = Math.min(3 + Math.floor(lv / 3), 6);
-    return { grid: 'hex', cols, rows: Math.min(cols + 1 + Math.floor(lv / 6), 9) };
-  }
-  const cols = Math.min(3 + Math.ceil(lv / 2), 7);
-  return { grid: 'square', cols, rows: Math.min(cols + Math.floor(lv / 3), 10) };
+  if (LEVELS[lv]) return LEVELS[lv];
+  const g = Math.floor((lv - 10) / 4);
+  const grid = ['square', 'hex', 'tri', 'oct'][lv % 4];
+  let cols, rows, cells;
+  if (grid === 'square') { cols = Math.min(6 + g, 7); rows = Math.min(7 + g, 10); cells = cols * rows; }
+  else if (grid === 'hex') { cols = Math.min(5 + g, 6); rows = Math.min(7 + g, 9); cells = cols * rows; }
+  else if (grid === 'tri') { cols = Math.min(11 + 2 * g, 15); rows = Math.min(6 + g, 9); cells = cols * rows; }
+  else { cols = Math.min(4 + g, 5); rows = Math.min(5 + g, 7); cells = cols * rows + (cols - 1) * (rows - 1); }
+  return {
+    grid, cols, rows,
+    rocks: Math.round(cells * 0.07),
+    bridges: (grid === 'square' || grid === 'oct') ? Math.min(1 + g, 3) : 0,
+    fixed: Math.round(cells * 0.04)
+  };
 }
 function loadLevel(lv) {
   hideOverlay();
   lv = Math.max(1, Math.min(lv, pipeProgress.unlocked));
   P.level = lv;
   pipeProgress.level = lv;
-  store.set('atlas.pipes', pipeProgress);
+  store.set('atlas.pipes2', pipeProgress);
   const cfg = levelConfig(lv);
-  generatePipes(cfg.grid, cfg.cols, cfg.rows, mulberry(lv * 7919 + 13));
+  generatePipes(cfg, mulberry(lv * 7919 + 13));
   renderPipes();
   updateStrip();
   refreshStats();
   buildControls();
+  if (cfg.intro && !pipeProgress.stars[lv]) {
+    showOverlay(cfg.title, '', cfg.intro, [{ label: 'Play', fn: hideOverlay }]);
+  }
 }
 
 /* RUSH */
-const RUSH_SIZES = [['square', 4, 4], ['square', 4, 5], ['square', 5, 5], ['hex', 4, 5], ['square', 5, 6], ['hex', 5, 6],
-  ['square', 6, 7], ['hex', 5, 7], ['square', 6, 8], ['hex', 6, 8], ['square', 7, 9], ['hex', 6, 9], ['square', 7, 10]];
+const RUSH_SIZES = [
+  { grid: 'square', cols: 4, rows: 4 }, { grid: 'square', cols: 4, rows: 5 }, { grid: 'hex', cols: 4, rows: 5 },
+  { grid: 'square', cols: 5, rows: 5, rocks: 2 }, { grid: 'tri', cols: 9, rows: 5 }, { grid: 'hex', cols: 5, rows: 6, rocks: 2 },
+  { grid: 'oct', cols: 3, rows: 4 }, { grid: 'square', cols: 5, rows: 6, bridges: 1, rocks: 2 }, { grid: 'tri', cols: 11, rows: 6, rocks: 3 },
+  { grid: 'hex', cols: 5, rows: 7, rocks: 3 }, { grid: 'oct', cols: 4, rows: 5, bridges: 1 }, { grid: 'square', cols: 6, rows: 8, rocks: 3, bridges: 2 },
+  { grid: 'tri', cols: 13, rows: 7, rocks: 4 }, { grid: 'hex', cols: 6, rows: 8, rocks: 4 }, { grid: 'oct', cols: 4, rows: 6, rocks: 2, bridges: 2 }
+];
 function newRushBoard() {
   const s = RUSH_SIZES[Math.min(R.boards, RUSH_SIZES.length - 1)];
-  generatePipes(s[0], s[1], s[2], mulberry(Date.now() & 0xffffffff));
+  generatePipes(s, mulberry(Date.now() & 0xffffffff));
   renderPipes();
   refreshStats();
 }
@@ -1708,7 +1892,7 @@ function rushIntro() {
   R.time = 60; R.boards = 0;
   newRushBoard();
   const best = store.get('atlas.rushBest', 0);
-  showOverlay('Pipe Rush', '', `60 seconds on the clock. Every board you clear adds time and the next one gets bigger.${best ? `<br/>Best run: ${best}` : ''}`,
+  showOverlay('Pipe Rush', '', `60 seconds on the clock. Every board you clear adds time, and the next one gets bigger and stranger.${best ? `<br/>Best run: ${best}` : ''}`,
     [{ label: 'Start', fn: startRush }]);
 }
 
