@@ -114,6 +114,24 @@
   .style-row.active .check { opacity: 1; }
   .check::after { content: '◆'; color: var(--accent); font-size: 12px; }
 
+  .vault { display: none; flex-direction: column; gap: 6px; padding: 0 16px 6px; flex-shrink: 0; }
+  .vault.open { display: flex; }
+  .vault-row { display: flex; align-items: center; gap: 8px; }
+  .vault-label { width: 38px; font-size: 9px; text-transform: uppercase; letter-spacing: 0.16em; color: var(--stone-dark); flex-shrink: 0; }
+  .vault-cells { flex: 1; display: flex; gap: 6px; align-items: center; }
+  .chip, .slot { flex: 1; height: 34px; min-width: 0; padding: 0; border: 2px solid var(--grout); background: var(--bg); color: var(--stone-dark); font-family: var(--serif); font-size: 19px; font-weight: 600; cursor: pointer; transition: opacity 0.2s, background 0.3s; }
+  .chip { border-radius: 17px; }
+  .slot { border-radius: 4px; }
+  .chip.found { color: #fff; }
+  .chip.used { opacity: 0.3; }
+  .vault-cells .btn { flex-shrink: 0; }
+  .shake { animation: shake 0.4s; }
+  @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+  .vault-ring { fill: var(--bg); stroke-width: 2.5; pointer-events: none; transition: fill 0.4s; }
+  .vault-pip { fill: var(--grout); pointer-events: none; transition: fill 0.3s, opacity 0.3s; }
+  .vault-digit { font-family: var(--sans); font-weight: 700; fill: #fff; text-anchor: middle; dominant-baseline: central; opacity: 0; transition: opacity 0.4s; pointer-events: none; }
+  .vault-spot.found .vault-digit { opacity: 1; }
+
   .overlay { position: fixed; inset: 0; display: flex; align-items: center; justify-content: center; background: rgba(255, 252, 245, 0.55); opacity: 0; pointer-events: none; transition: opacity 0.3s; z-index: 30; padding: 24px; }
   .overlay.open { opacity: 1; pointer-events: auto; }
   .card { background: var(--bg); border: 1px solid var(--grout); border-radius: 4px; padding: 26px 24px 20px; width: 100%; max-width: 320px; text-align: center; box-shadow: 0 10px 40px rgba(0,0,0,0.12); transform: translateY(10px); transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1); }
@@ -145,6 +163,11 @@
 <div class="style-strip">
   <div class="style-name" id="styleName">Andalusian</div>
   <div class="style-origin" id="styleOrigin">Free Play</div>
+</div>
+
+<div class="vault" id="vault">
+  <div class="vault-row"><div class="vault-label">Found</div><div class="vault-cells" id="vaultChips"></div></div>
+  <div class="vault-row"><div class="vault-label">Code</div><div class="vault-cells" id="vaultSlots"></div></div>
 </div>
 
 <div class="board-wrap">
@@ -391,7 +414,10 @@ function updateHint() {
   } else if (mode === 'viz') {
     hintEl.innerHTML = 'Tap a tile to send a ripple.<br/>Mic makes the floor dance to sound.';
   } else if (currentStyle.kind === 'escher') {
-    hintEl.innerHTML = 'Tap a creature to spin it.<br/>Match colors at each vertex.';
+    const allFound = VAULT.spots.length && VAULT.spots.every(s => s.found);
+    if (VAULT.msg) hintEl.innerHTML = VAULT.msg + '<br/>Try another order.';
+    else if (allFound) hintEl.innerHTML = VAULT.hard ? 'All five found.<br/>Guess the order to crack it.' : 'All five found.<br/>Put each digit under its color.';
+    else hintEl.innerHTML = 'Spin tiles around a ringed dot.<br/>Fill its pips to reveal a digit.';
   } else if (currentStyle.kind === 'wang') {
     hintEl.innerHTML = 'Tap to cycle. Match colored<br/>edges with neighbors.';
   } else {
@@ -1096,6 +1122,7 @@ function fitBoard(gt, cols, rows) {
 function buildBoard() {
   board.innerHTML = '';
   board.classList.remove('solved');
+  vaultEl.classList.toggle('open', vaultWanted());
   tiles = [];
   tileMap.clear();
   vertexGlows.clear();
@@ -1122,6 +1149,7 @@ function buildBoard() {
   });
 
   if (currentStyle.kind === 'escher') buildVertexGlows();
+  setupVault();
   runDetect();
   refreshStats();
 }
@@ -1167,6 +1195,7 @@ function runDetect() {
   if (currentStyle.kind === 'escher') detectVertexMatches();
   else if (currentStyle.kind === 'wang') detectWangMatches();
   else detectLoops();
+  updateVault();
 }
 
 /* ═══════════════════════════════════════════════════════
@@ -1984,6 +2013,147 @@ function showOverlay(title, stars, body, actions) {
 }
 function hideOverlay() { overlay.classList.remove('open'); }
 
+/* VAULT (Escher skins in Play)
+   Five ringed dots hide a digit each. Spin the tiles around a dot until
+   every pip fills, the digit pops out, then enter the code. Easy mode
+   colors each code slot to match its dot. Hard mode hides the order and
+   each try reports how many digits sit in the right place. */
+const VAULT_COLORS = ['#c0392b', '#2e6ac4', '#3a8a4a', '#d49a1a', '#8a4ab0'];
+const VAULT = { active: false, spots: [], entry: [], guesses: 0, done: false, hard: store.get('atlas.vaultHard', false), msg: '' };
+const vaultEl = document.getElementById('vault');
+const chipsEl = document.getElementById('vaultChips');
+const slotsEl = document.getElementById('vaultSlots');
+
+function vaultWanted() { return mode === 'play' && currentStyle.kind === 'escher'; }
+
+function setupVault() {
+  VAULT.active = vaultWanted();
+  VAULT.spots = []; VAULT.entry = []; VAULT.guesses = 0; VAULT.done = false; VAULT.msg = '';
+  if (!VAULT.active) return;
+  const gt = currentStyle.gridType;
+  const need = gt === 'hex' ? 3 : gt === 'square' ? 4 : 6;
+  const cands = [...vertexGlows.values()].filter(v => v.tiles.length === need && v.tiles.every(t => tileMap.has(`${t.col},${t.row}`)));
+  for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
+  const used = new Set(), chosen = [];
+  for (let pass = 0; pass < 2 && chosen.length < 5; pass++) {
+    for (const v of cands) {
+      if (chosen.length >= 5) break;
+      if (chosen.includes(v)) continue;
+      const keys = v.tiles.map(t => `${t.col},${t.row}`);
+      if (keys.some(k => used.has(k))) continue;
+      const minGap = pass === 0 ? TILE_SIZE * 2.2 : TILE_SIZE * 1.2;
+      if (chosen.some(c => Math.hypot(c.pos.x - v.pos.x, c.pos.y - v.pos.y) < minGap)) continue;
+      chosen.push(v); keys.forEach(k => used.add(k));
+    }
+  }
+  const digits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
+  for (let i = digits.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [digits[i], digits[j]] = [digits[j], digits[i]]; }
+  const n = currentStyle.rotations;
+  chosen.forEach((v, i) => {
+    const tl = v.tiles.map(t => tileMap.get(`${t.col},${t.row}`));
+    const targets = tl.map(() => Math.floor(Math.random() * n));
+    if (n > 1 && tl.every((t, k) => t.rot === targets[k])) targets[0] = (targets[0] + 1) % n;
+    const color = VAULT_COLORS[i];
+    const g = svgEl('g', { class: 'vault-spot' });
+    const R = TILE_SIZE * 0.27;
+    const ring = svgEl('circle', { cx: v.pos.x, cy: v.pos.y, r: R, class: 'vault-ring', stroke: color });
+    g.appendChild(ring);
+    const pips = tl.map((t, k) => {
+      const a = -Math.PI / 2 + k * 2 * Math.PI / tl.length;
+      const p = svgEl('circle', { cx: v.pos.x + Math.cos(a) * R * 0.62, cy: v.pos.y + Math.sin(a) * R * 0.62, r: R * 0.17, class: 'vault-pip' });
+      g.appendChild(p);
+      return p;
+    });
+    const txt = svgEl('text', { x: v.pos.x, y: v.pos.y, class: 'vault-digit', 'font-size': R * 1.25 });
+    txt.textContent = digits[i];
+    g.appendChild(txt);
+    board.appendChild(g);
+    VAULT.spots.push({ tiles: tl, targets, color, digit: digits[i], found: false, g, ring, pips });
+  });
+  renderVaultPanel();
+  updateVault();
+}
+
+function updateVault() {
+  if (!VAULT.active) return;
+  let newly = false;
+  VAULT.spots.forEach(s => {
+    if (s.found) return;
+    const count = s.tiles.filter((t, k) => t.rot === s.targets[k]).length;
+    s.pips.forEach((p, k) => { p.style.fill = k < count ? s.color : ''; });
+    if (count === s.tiles.length) {
+      s.found = true; newly = true;
+      s.g.classList.add('found');
+      s.ring.style.fill = s.color;
+      s.pips.forEach(p => p.style.opacity = '0');
+      if (navigator.vibrate) navigator.vibrate(30);
+    }
+  });
+  if (newly) { flashB(); renderVaultPanel(); updateHint(); }
+}
+
+function renderVaultPanel() {
+  vaultEl.classList.toggle('open', VAULT.active);
+  if (!VAULT.active) return;
+  chipsEl.innerHTML = '';
+  slotsEl.innerHTML = '';
+  VAULT.spots.forEach((s, i) => {
+    const c = document.createElement('button');
+    const usedHere = VAULT.entry.includes(i);
+    c.className = 'chip' + (s.found ? ' found' : '') + (usedHere ? ' used' : '');
+    c.style.borderColor = s.color;
+    if (s.found) c.style.background = s.color;
+    c.textContent = s.found ? s.digit : '?';
+    c.addEventListener('click', () => {
+      if (!s.found || usedHere || VAULT.done || VAULT.entry.length >= VAULT.spots.length) return;
+      VAULT.entry.push(i); VAULT.msg = '';
+      renderVaultPanel(); updateHint();
+    });
+    chipsEl.appendChild(c);
+  });
+  VAULT.spots.forEach((_, i) => {
+    const sl = document.createElement('button');
+    sl.className = 'slot';
+    if (!VAULT.hard) sl.style.borderColor = VAULT_COLORS[i];
+    const idx = VAULT.entry[i];
+    if (idx !== undefined) {
+      sl.textContent = VAULT.spots[idx].digit;
+      sl.style.background = VAULT.spots[idx].color;
+      sl.style.color = '#fff';
+    }
+    sl.addEventListener('click', () => {
+      if (idx === undefined || VAULT.done) return;
+      VAULT.entry.splice(i, 1);
+      renderVaultPanel();
+    });
+    slotsEl.appendChild(sl);
+  });
+  const ub = document.createElement('button');
+  ub.className = 'btn';
+  ub.textContent = 'Unlock';
+  ub.disabled = VAULT.entry.length !== VAULT.spots.length || VAULT.done;
+  ub.addEventListener('click', tryUnlock);
+  slotsEl.appendChild(ub);
+}
+
+function tryUnlock() {
+  VAULT.guesses++;
+  const placed = VAULT.entry.filter((s, i) => s === i).length;
+  if (placed === VAULT.spots.length) {
+    VAULT.done = true;
+    score += 100; refreshStats(); flashB();
+    renderVaultPanel();
+    const code = VAULT.spots.map(s => s.digit).join(' ');
+    showOverlay('Vault cracked', '', `Code ${code}<br/>${VAULT.guesses === 1 ? 'First try.' : `Cracked in ${VAULT.guesses} tries.`}`,
+      [{ label: 'New vault', fn: () => { hideOverlay(); buildBoard(); } }]);
+    return;
+  }
+  VAULT.msg = `${placed} of ${VAULT.spots.length} in the right place.`;
+  VAULT.entry = [];
+  slotsEl.classList.remove('shake'); void slotsEl.offsetWidth; slotsEl.classList.add('shake');
+  renderVaultPanel(); updateHint();
+}
+
 /* MODES AND CONTROLS */
 function makeBtn(label, fn, opts = {}) {
   const b = document.createElement('button');
@@ -1999,6 +2169,7 @@ function buildControls() {
   if (mode === 'play') {
     makeBtn('Shuffle', shuffleBoard, { alt: true });
     makeBtn('Reset', buildBoard);
+    if (currentStyle.kind === 'escher') makeBtn('Hard', () => { VAULT.hard = !VAULT.hard; store.set('atlas.vaultHard', VAULT.hard); renderVaultPanel(); updateHint(); buildControls(); }, { alt: true, on: VAULT.hard });
   } else if (mode === 'pipes') {
     makeBtn('Prev', () => loadLevel(P.level - 1), { alt: true, disabled: P.level <= 1 });
     makeBtn('Retry', () => loadLevel(P.level), { alt: true });
@@ -2054,6 +2225,7 @@ function selectStyle(s, close = true) {
   store.set('atlas.skin', s.id);
   applyStylePalette(s);
   if (mode === 'play' || mode === 'viz') buildBoard();
+  buildControls();
   buildDrawer();
   if (close) closeDrawer();
 }
