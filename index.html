@@ -73,6 +73,16 @@
   .deco { pointer-events: none; }
 
   .pipe-base { fill: var(--bg); stroke: var(--grout); stroke-width: 0.8; transition: fill 0.4s, stroke 0.4s; }
+  .ps-streets .pipe-base { fill: #e4e8d6; stroke: #cfd4bf; }
+  .ps-power .pipe-base { fill: #eef3f6; stroke: #d3dde3; }
+  .ps-water .pipe-base { fill: #ece7de; stroke: #d6cfc2; }
+  .pseg { fill: none; stroke-linecap: butt; pointer-events: none; }
+  .phub { stroke: none; pointer-events: none; }
+  .water.on .flow { animation: flow 0.9s linear infinite; }
+  @keyframes flow { to { stroke-dashoffset: -20; } }
+  .pole { fill: #7a5a3a; stroke: #2b2b2b; stroke-width: 1.5; pointer-events: none; }
+  .house { fill: #f6f3ec; stroke: #2b2b2b; stroke-width: 2; pointer-events: none; }
+  .house-lit { fill: #ffd23a; pointer-events: none; }
   .pipe-tile.locked .pipe-base { fill: var(--bg-deep); stroke: var(--accent); stroke-width: 1.6; }
   .board.solved .pipe-base { fill: var(--bg-deep); }
   .pc-l { stroke: var(--ink); fill: none; stroke-linecap: butt; pointer-events: none; }
@@ -398,8 +408,8 @@ function refreshStats() {
     labelA.textContent = 'Lit'; labelB.textContent = 'Spins';
     statA.textContent = loopCount; statB.textContent = vizSpins;
   } else if (mode === 'pipes') {
-    labelA.textContent = 'Level'; labelB.textContent = 'Moves';
-    statA.textContent = P.level; statB.textContent = `${P.moves}/${P.par}`;
+    labelA.textContent = P.big ? 'Size' : 'Level'; labelB.textContent = 'Moves';
+    statA.textContent = P.big ? BIG[P.big].label : P.level; statB.textContent = `${P.moves}/${P.par}`;
   } else if (mode === 'rush') {
     labelA.textContent = 'Time'; labelB.textContent = 'Boards';
     statA.textContent = Math.max(0, Math.ceil(R.time));
@@ -1135,6 +1145,7 @@ function fitBoard(gt, cols, rows) {
 function buildBoard() {
   board.innerHTML = '';
   board.classList.remove('solved');
+  PIPE_STYLE_KEYS.forEach(k => board.classList.remove('ps-' + k));
   vaultEl.classList.toggle('open', vaultWanted());
   tiles = [];
   tileMap.clear();
@@ -1644,6 +1655,7 @@ function generatePipes(cfg, rand) {
   let out = null;
   for (let t = 0; t < 40 && !out; t++) out = tryGenerate(cfg, rand);
   if (!out) out = tryGenerate(Object.assign({}, cfg, { rocks: 0, bridges: 0 }), rand);
+  P.style = cfg.style || PIPE_STYLE_KEYS[Math.floor(rand() * PIPE_STYLE_KEYS.length)];
   P.grid = cfg.grid; P.cells = out.cells; P.source = out.src; P.moves = 0; P.solved = false;
   for (let tries = 0; tries < 20; tries++) {
     let par = 0;
@@ -1703,18 +1715,63 @@ function pipeTransform(cell, animate) {
 
 function polyPoints(pts, s = 1) { return pts.map(p => (p.x * s).toFixed(2) + ',' + (p.y * s).toFixed(2)).join(' '); }
 
-function drawPipe(parent, waterG, ends, deg, hubScale, widthBoost = 1) {
-  [['pc', 36], ['pi', 24], ['pw', 13]].forEach(([cls, w]) => {
-    w *= widthBoost;
-    const target = cls === 'pw' ? waterG : parent;
-    ends.forEach(p => target.appendChild(svgEl('line', { x1: 0, y1: 0, x2: p.x, y2: p.y, class: cls + '-l', 'stroke-width': w })));
-    if (deg > 0) target.appendChild(svgEl('circle', { r: deg === 1 ? w * 0.9 * hubScale : w / 2, class: cls + '-c' }));
+/* PIPE STYLES. Each board picks one. base layers always show, water
+   layers light up when flow reaches the tile. */
+const PIPE_STYLES = {
+  classic: { label: 'Classic',
+    base: [{ c: 'var(--ink)', w: 36, hub: 1 }, { c: 'var(--bg-deep)', w: 24, hub: 1 }],
+    water: [{ c: 'var(--glow)', w: 13, hub: 1 }], drain: true },
+  water: { label: 'Water Mains',
+    base: [{ c: '#56636d', w: 38, hub: 1 }, { c: '#d7dee3', w: 28, hub: 1 }],
+    water: [{ c: '#3a8fd8', w: 16, hub: 1 }, { c: '#d4ecff', w: 5, dash: '6 10', flow: 1 }], drain: true },
+  streets: { label: 'Streets',
+    base: [{ c: '#a7a79f', w: 44, hub: 1 }, { c: '#55585e', w: 36, hub: 1 }, { c: '#c9c9c0', w: 3, dash: '9 7' }],
+    water: [{ c: '#f4c430', w: 3.5, dash: '9 7', flow: 1 }] },
+  power: { label: 'Power Lines',
+    base: [{ c: '#2b2b2b', w: 3 }],
+    water: [{ c: '#ffd23a', w: 12, op: 0.35 }, { c: '#ffb000', w: 3.5, dash: '4 6', flow: 1 }], poles: true }
+};
+const PIPE_STYLE_KEYS = Object.keys(PIPE_STYLES);
+
+function drawLayers(g, waterG, segs, deg, hubScale, boost, withHub) {
+  const st = PIPE_STYLES[P.style] || PIPE_STYLES.classic;
+  [[st.base, g], [st.water, waterG]].forEach(([list, target]) => {
+    list.forEach(L => {
+      const w = L.w * boost;
+      segs.forEach(([p, q]) => {
+        const ln = svgEl('line', { x1: p.x, y1: p.y, x2: q.x, y2: q.y, class: 'pseg' + (L.flow ? ' flow' : ''), 'stroke-width': w });
+        ln.style.stroke = L.c;
+        if (L.dash) ln.setAttribute('stroke-dasharray', L.dash);
+        if (L.op) ln.style.opacity = L.op;
+        target.appendChild(ln);
+      });
+      if (withHub && L.hub && deg > 0) {
+        const c = svgEl('circle', { r: deg === 1 ? w * 0.9 * hubScale : w / 2, class: 'phub' });
+        c.style.fill = L.c;
+        target.appendChild(c);
+      }
+    });
   });
+}
+
+function drawPipe(parent, waterG, ends, deg, hubScale, boost, isSource) {
+  const st = PIPE_STYLES[P.style] || PIPE_STYLES.classic;
+  drawLayers(parent, waterG, ends.map(p => [{ x: 0, y: 0 }, p]), deg, hubScale, boost, true);
+  if (st.poles && !isSource) {
+    if (deg === 1) {
+      parent.appendChild(svgEl('rect', { x: -9 * boost, y: -8 * boost, width: 18 * boost, height: 16 * boost, rx: 2, class: 'house' }));
+      const lamp = svgEl('rect', { x: -5 * boost, y: -4 * boost, width: 10 * boost, height: 8 * boost, class: 'house-lit' });
+      waterG.appendChild(lamp);
+    } else {
+      parent.appendChild(svgEl('circle', { r: 7 * boost, class: 'pole' }));
+    }
+  }
 }
 
 function renderPipes() {
   board.innerHTML = '';
   board.classList.toggle('solved', P.solved);
+  PIPE_STYLE_KEYS.forEach(k => board.classList.toggle('ps-' + k, P.style === k));
   const bb = P.bbox, pad = 14;
   board.setAttribute('viewBox', `${bb.minX - pad} ${bb.minY - pad} ${bb.maxX - bb.minX + pad * 2} ${bb.maxY - bb.minY + pad * 2}`);
   board.setAttribute('preserveAspectRatio', 'xMidYMid meet');
@@ -1734,10 +1791,10 @@ function renderPipes() {
       const g = svgEl('g', { class: 'pipe-tile', transform: `translate(${cell.cx} ${cell.cy})` });
       g.appendChild(svgEl('polygon', { points: pts, class: 'pipe-base bridge-base' }));
       const wg0 = svgEl('g', { class: 'water' }), wg1 = svgEl('g', { class: 'water' });
-      const ln = (a, b, cls, w, tgt) => tgt.appendChild(svgEl('line', { x1: a.x, y1: a.y, x2: b.x, y2: b.y, class: cls, 'stroke-width': w }));
       const m = cell.mids;
-      ln(m[0], m[2], 'pc-l', 36, g); ln(m[0], m[2], 'pi-l', 24, g); ln(m[0], m[2], 'pw-l', 13, wg0); g.appendChild(wg0);
-      ln(m[1], m[3], 'bridge-gap', 54, g); ln(m[1], m[3], 'pc-l', 36, g); ln(m[1], m[3], 'pi-l', 24, g); ln(m[1], m[3], 'pw-l', 13, wg1); g.appendChild(wg1);
+      drawLayers(g, wg0, [[m[0], m[2]]], 0, 1, 1, false); g.appendChild(wg0);
+      g.appendChild(svgEl('line', { x1: m[1].x, y1: m[1].y, x2: m[3].x, y2: m[3].y, class: 'bridge-gap', 'stroke-width': 56 }));
+      drawLayers(g, wg1, [[m[1], m[3]]], 0, 1, 1, false); g.appendChild(wg1);
       board.appendChild(g);
       cell.el = null; cell.waterGs = [wg0, wg1];
       return;
@@ -1749,13 +1806,13 @@ function renderPipes() {
     for (let e = 0; e < cell.n; e++) if (cell.sol & (1 << e)) ends.push(cell.mids[e]);
     const deg = ends.length;
     const waterG = svgEl('g', { class: 'water' });
-    drawPipe(g, waterG, ends, deg, hubScale, boost);
+    drawPipe(g, waterG, ends, deg, hubScale, boost, cell.source);
     g.appendChild(waterG);
     if (cell.source) {
       const half = Math.min(20, cell.inr * 0.5);
       g.appendChild(svgEl('rect', { x: -half, y: -half, width: half * 2, height: half * 2, rx: half * 0.3, class: 'source-plate' }));
       g.appendChild(svgEl('circle', { r: half * 0.45, class: 'source-core' }));
-    } else if (deg === 1) {
+    } else if (deg === 1 && (PIPE_STYLES[P.style] || PIPE_STYLES.classic).drain) {
       g.appendChild(svgEl('circle', { r: 4.5 * hubScale, class: 'drain' }));
     }
     const hit = svgEl('polygon', { points: pts, class: 'tile-hit' });
@@ -1818,7 +1875,15 @@ function pipesSolved() {
   P.solved = true;
   board.classList.add('solved');
   flashB();
-  if (mode === 'pipes') {
+  if (mode === 'pipes' && P.big) {
+    const ms = Date.now() - P.bigStart;
+    const best = store.get('atlas.bigBest', {});
+    const isBest = !best[P.big] || ms < best[P.big];
+    if (isBest) { best[P.big] = ms; store.set('atlas.bigBest', best); }
+    const t = `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+    setTimeout(() => showOverlay(`${BIG[P.big].label} board clear`, '', `${P.moves} moves, par ${P.par}.<br/>Time ${t}${isBest ? ', a new best.' : '.'}`,
+      [{ label: 'Sizes', alt: true, fn: pickBig }, { label: 'New board', fn: () => loadBig(P.big) }]), 900);
+  } else if (mode === 'pipes') {
     const stars = P.moves <= P.par ? 3 : P.moves <= Math.ceil(P.par * 1.5) ? 2 : 1;
     const prev = pipeProgress.stars[P.level] || 0;
     pipeProgress.stars[P.level] = Math.max(prev, stars);
@@ -1853,7 +1918,8 @@ const LEVELS = {
   9: { grid: 'square', cols: 6, rows: 7, rocks: 3, bridges: 1, fixed: 3, title: 'Pinned tiles', intro: 'Tiles with rivets are pinned in the right position. Use them as clues.' }
 };
 function levelConfig(lv) {
-  if (LEVELS[lv]) return LEVELS[lv];
+  const style = PIPE_STYLE_KEYS[(lv - 1) % PIPE_STYLE_KEYS.length];
+  if (LEVELS[lv]) return Object.assign({ style }, LEVELS[lv]);
   const g = Math.floor((lv - 10) / 4);
   const grid = ['square', 'hex', 'tri', 'oct'][lv % 4];
   let cols, rows, cells;
@@ -1862,7 +1928,7 @@ function levelConfig(lv) {
   else if (grid === 'tri') { cols = Math.min(11 + 2 * g, 15); rows = Math.min(6 + g, 9); cells = cols * rows; }
   else { cols = Math.min(4 + g, 5); rows = Math.min(5 + g, 7); cells = cols * rows + (cols - 1) * (rows - 1); }
   return {
-    grid, cols, rows,
+    grid, cols, rows, style,
     rocks: Math.round(cells * 0.07),
     bridges: (grid === 'square' || grid === 'oct') ? Math.min(1 + g, 3) : 0,
     fixed: Math.round(cells * 0.04)
@@ -1870,6 +1936,7 @@ function levelConfig(lv) {
 }
 function loadLevel(lv) {
   hideOverlay();
+  P.big = null;
   lv = Math.max(1, Math.min(lv, pipeProgress.unlocked));
   P.level = lv;
   pipeProgress.level = lv;
@@ -1886,6 +1953,35 @@ function loadLevel(lv) {
   }
 }
 
+/* BIG BOARDS */
+const BIG = {
+  large: { label: 'Large', square: [9, 13], hex: [8, 11], tri: [17, 11], oct: [6, 8], bridges: 3 },
+  huge: { label: 'Huge', square: [12, 17], hex: [10, 14], tri: [23, 15], oct: [8, 11], bridges: 5 },
+  giant: { label: 'Giant', square: [14, 22], hex: [12, 18], tri: [27, 19], oct: [9, 13], bridges: 7 }
+};
+function loadBig(size) {
+  hideOverlay();
+  const b = BIG[size];
+  const grid = ['square', 'hex', 'tri', 'oct'][Math.floor(Math.random() * 4)];
+  const [cols, rows] = b[grid];
+  const cells = cols * rows + (grid === 'oct' ? (cols - 1) * (rows - 1) : 0);
+  P.big = size;
+  generatePipes({ grid, cols, rows, rocks: Math.round(cells * 0.06), bridges: (grid === 'square' || grid === 'oct') ? b.bridges : 0, fixed: Math.round(cells * 0.03) },
+    mulberry(Date.now() & 0xffffffff));
+  P.bigStart = Date.now();
+  renderPipes();
+  updateStrip();
+  refreshStats();
+  buildControls();
+}
+function pickBig() {
+  const best = store.get('atlas.bigBest', {});
+  const fmt = ms => `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
+  const lines = Object.keys(BIG).map(k => `${BIG[k].label}: ${best[k] ? 'best ' + fmt(best[k]) : 'not cleared yet'}`).join('<br/>');
+  showOverlay('Big boards', '', `Pick a size. Each board mixes grids, obstacles and pipe styles.<br/><br/>${lines}`,
+    Object.keys(BIG).map(k => ({ label: BIG[k].label, fn: () => loadBig(k) })));
+}
+
 /* RUSH */
 const RUSH_SIZES = [
   { grid: 'square', cols: 4, rows: 4 }, { grid: 'square', cols: 4, rows: 5 }, { grid: 'hex', cols: 4, rows: 5 },
@@ -1898,6 +1994,7 @@ function newRushBoard() {
   const s = RUSH_SIZES[Math.min(R.boards, RUSH_SIZES.length - 1)];
   generatePipes(s, mulberry(Date.now() & 0xffffffff));
   renderPipes();
+  updateStrip();
   refreshStats();
 }
 function startRush() {
@@ -2255,10 +2352,15 @@ function buildControls() {
     makeBtn('Shuffle', shuffleBoard, { alt: true });
     makeBtn('Reset', buildBoard);
     if (currentStyle.kind === 'escher') makeBtn('Hard', () => { VAULT.hard = !VAULT.hard; store.set('atlas.vaultHard', VAULT.hard); renderVaultPanel(); updateHint(); buildControls(); }, { alt: true, on: VAULT.hard });
+  } else if (mode === 'pipes' && P.big) {
+    makeBtn('Levels', () => loadLevel(pipeProgress.level || 1), { alt: true });
+    makeBtn('New', () => loadBig(P.big), { alt: true });
+    makeBtn('Size', pickBig);
   } else if (mode === 'pipes') {
     makeBtn('Prev', () => loadLevel(P.level - 1), { alt: true, disabled: P.level <= 1 });
     makeBtn('Retry', () => loadLevel(P.level), { alt: true });
     makeBtn('Next', () => loadLevel(P.level + 1), { disabled: P.level >= pipeProgress.unlocked });
+    makeBtn('Big', pickBig);
   } else if (mode === 'rush') {
     makeBtn('Restart', startRush, { alt: true });
   } else if (mode === 'viz') {
@@ -2268,7 +2370,8 @@ function buildControls() {
   }
 }
 function updateStrip() {
-  const labels = { play: 'Free Play', pipes: `Pipe Challenge · Level ${P.level}`, rush: 'Pipe Rush', viz: 'Visualizer' };
+  const sty = (PIPE_STYLES[P.style] || PIPE_STYLES.classic).label;
+  const labels = { play: 'Free Play', pipes: P.big ? `${BIG[P.big].label} · ${sty}` : `Level ${P.level} · ${sty}`, rush: `Pipe Rush · ${sty}`, viz: 'Visualizer' };
   styleOriginEl.textContent = labels[mode];
 }
 function shuffleBoard() {
@@ -2289,6 +2392,8 @@ function setMode(m) {
   mode = m;
   store.set('atlas.mode', m);
   document.querySelectorAll('.mode-tab').forEach(b => b.classList.toggle('active', b.dataset.mode === m));
+  VAULT.active = false;
+  vaultEl.classList.toggle('open', vaultWanted());
   updateHint();
   updateStrip();
   if (m === 'play') { buildBoard(); }
