@@ -89,7 +89,17 @@
   .valve-arrow { fill: var(--accent); stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; pointer-events: none; }
   .ps-water .valve-arrow { fill: #c0392b; stroke: #56636d; }
   .ps-streets .valve-arrow { fill: #ffffff; stroke: none; }
-  .ps-power .valve-arrow { fill: #2b2b2b; stroke: none; }
+  .ps-power .valve-arrow, .ps-circuit .valve-arrow { fill: #24382c; stroke: none; }
+  .ps-circuit .pipe-base { fill: #f3f6ef; stroke: #d9e2d3; }
+  .cp-body { fill: #f3f6ef; stroke: #24382c; stroke-width: 2.2; pointer-events: none; }
+  .cp-clear { fill: #f3f6ef; stroke: none; pointer-events: none; }
+  .cp-line { fill: none; stroke: #24382c; stroke-width: 2.2; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .cp-line.thick { stroke-width: 4; }
+  .cp-fill { fill: #24382c; pointer-events: none; }
+  .cp-hot { fill: none; stroke: #ff7a00; stroke-width: 2.6; stroke-linecap: round; stroke-linejoin: round; pointer-events: none; }
+  .cp-glow { opacity: 0.6; pointer-events: none; }
+  .cp-dot { fill: #24382c; pointer-events: none; }
+  .cp-text { font-family: var(--sans); font-weight: 700; fill: #24382c; text-anchor: middle; dominant-baseline: central; pointer-events: none; }
   .valve-bar { stroke: #2b2b2b; stroke-width: 3; pointer-events: none; }
   .pole { fill: #7a5a3a; stroke: #2b2b2b; stroke-width: 1.5; pointer-events: none; }
   .house { fill: #f6f3ec; stroke: #2b2b2b; stroke-width: 2; pointer-events: none; }
@@ -171,6 +181,8 @@
   .post-board { margin-top: 8px; text-align: left; font-size: 13px; }
   .post-board div { display: flex; justify-content: space-between; padding: 3px 4px; border-bottom: 1px solid rgba(0,0,0,0.06); font-variant-numeric: tabular-nums; }
   .post-board div.me { color: var(--accent); font-weight: 600; }
+  .legend { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px 4px; margin-top: 12px; }
+  .leg-item { display: flex; flex-direction: column; align-items: center; gap: 2px; font-family: var(--sans); font-size: 10px; color: var(--ink); }
   .card-actions { display: flex; gap: 8px; justify-content: center; }
 </style>
 </head>
@@ -374,7 +386,24 @@ const STYLES = [
     kind: 'escher', motif: 'trifish', gridType: 'triangle', rotations: 3, colors: 3,
     edgeSpec: 'trifish',
     palette: { bg: '#e8ede8', bgDeep: '#d0d8d0', ink: '#0a1a2a', stone: '#c8d0d8', stoneDark: '#3a5060', grout: '#889098',
-               accent: '#2a5a7a', glow: '#c8a83a', c1: '#2a5a7a', c2: '#7a3a4a', c3: '#3a6a4a' }}
+               accent: '#2a5a7a', glow: '#c8a83a', c1: '#2a5a7a', c2: '#7a3a4a', c3: '#3a6a4a' }},
+  { section: 'Cyber', id: 'cyber-circuit', name: 'Circuit Board', origin: 'Cyber', desc: 'Traces with chamfered corners and solder pads.', kind: 'arc', gridType: 'square', tilePattern: 'square-circuit', rotations: 4, palette: { bg: '#eef5ee', bgDeep: '#dcebdc', ink: '#1d5c3a', stone: '#f7fbf7', stoneDark: '#4f8a66', grout: '#bcd8c3', accent: '#d4a017', glow: '#ffb000' } },
+  { section: 'Cyber', id: 'cyber-neon', name: 'Neon Grid', origin: 'Cyber', desc: 'Thick glowing hex tubes.', kind: 'arc', gridType: 'hex', tilePattern: 'hex-neon', rotations: 6, palette: { bg: '#f3eefb', bgDeep: '#e4dbf5', ink: '#ff2bd6', stone: '#ffffff', stoneDark: '#7a5bbf', grout: '#d6c8f0', accent: '#00c2ff', glow: '#00e5ff' } },
+  { section: 'Cyber', id: 'cyber-pixel', name: 'Pixel Pipes', origin: 'Cyber', desc: 'Stair step paths like an old game.', kind: 'arc', gridType: 'square', tilePattern: 'square-pixel', rotations: 4, palette: { bg: '#f4f4f0', bgDeep: '#e6e6df', ink: '#3b3bff', stone: '#ffffff', stoneDark: '#6b6bb0', grout: '#d0d0e0', accent: '#ff3b6b', glow: '#ffd400' } },
+  { section: 'Cyber', id: 'cyber-glitch', name: 'Glitch', origin: 'Cyber', desc: 'Hard diagonals in hot pink and cyan.', kind: 'arc', gridType: 'square', tilePattern: 'square-line-diag', rotations: 4, palette: { bg: '#f2f7f7', bgDeep: '#dff0f0', ink: '#ff2e63', stone: '#e0fbfc', stoneDark: '#3a6b73', grout: '#b8e0e2', accent: '#08d9d6', glow: '#08d9d6' } },
+  { section: 'Cyber', id: 'cyber-blueprint', name: 'Blueprint', origin: 'Cyber', desc: 'Quarter arcs on drafting paper.', kind: 'arc', gridType: 'square', tilePattern: 'square-quarter-small', rotations: 4, palette: { bg: '#eef4fb', bgDeep: '#dde8f6', ink: '#1f5fbf', stone: '#ffffff', stoneDark: '#5a86c4', grout: '#bcd3ef', accent: '#1f5fbf', glow: '#ff8a00' } },
+  { section: 'Cyber', id: 'cyber-orbit', name: 'Orbitals', origin: 'Cyber', desc: 'Wide swinging hex orbits.', kind: 'arc', gridType: 'hex', tilePattern: 'hex-orbit', rotations: 6, palette: { bg: '#f6f2ea', bgDeep: '#ebe4d4', ink: '#3a2f8f', stone: '#fffaf0', stoneDark: '#6d64b8', grout: '#d9d0e8', accent: '#ff6b35', glow: '#ffbe0b' } },
+  { section: 'Color Pop', id: 'pop-vapor', name: 'Vaporwave', origin: 'Color Pop', desc: 'Long sweeps in pink and violet.', kind: 'arc', gridType: 'hex', tilePattern: 'hex-corner-deep', rotations: 6, palette: { bg: '#fdf0f7', bgDeep: '#f6dcec', ink: '#7b2ff7', stone: '#ffe3f1', stoneDark: '#b05fd9', grout: '#f0c4de', accent: '#00b8d9', glow: '#ff71ce' } },
+  { section: 'Color Pop', id: 'pop-candy', name: 'Candy Shop', origin: 'Color Pop', desc: 'Quarter circles in sugar colors.', kind: 'arc', gridType: 'square', tilePattern: 'square-quarter', rotations: 4, palette: { bg: '#fff6f0', bgDeep: '#ffe6da', ink: '#ff4d8d', stone: '#fffdf5', stoneDark: '#c0607f', grout: '#ffd0dc', accent: '#36c5f0', glow: '#ffd23f' } },
+  { section: 'Color Pop', id: 'pop-sherbet', name: 'Sherbet', origin: 'Color Pop', desc: 'Nested fans in orange and lime.', kind: 'arc', gridType: 'square', tilePattern: 'square-fan', rotations: 4, palette: { bg: '#fff4e8', bgDeep: '#ffe4c8', ink: '#ff7a59', stone: '#ffe7d6', stoneDark: '#c0705a', grout: '#f5cdb0', accent: '#7bd389', glow: '#ffc15e' } },
+  { section: 'Color Pop', id: 'pop-highlighter', name: 'Highlighter', origin: 'Color Pop', desc: 'Triangle curves on yellow marker.', kind: 'arc', gridType: 'triangle', tilePattern: 'tri-arc', rotations: 3, palette: { bg: '#fbfbf2', bgDeep: '#efefd8', ink: '#222222', stone: '#f1ff8a', stoneDark: '#7a7a3a', grout: '#d8dca0', accent: '#ff3fa4', glow: '#00e0a4' } },
+  { section: 'Color Pop', id: 'pop-mint', name: 'Mint Chip', origin: 'Color Pop', desc: 'Rings in mint and cocoa.', kind: 'arc', gridType: 'hex', tilePattern: 'hex-rings', rotations: 6, palette: { bg: '#effaf4', bgDeep: '#d8f0e2', ink: '#2d6a4f', stone: '#d8f3dc', stoneDark: '#52796f', grout: '#b7dfc6', accent: '#6b4226', glow: '#95d5b2' } },
+  { section: 'Color Pop', id: 'pop-sunset', name: 'Sunset Strip', origin: 'Color Pop', desc: 'Split squares from red to gold.', kind: 'arc', gridType: 'square', tilePattern: 'square-diagonal', rotations: 4, subtleLoops: true, palette: { bg: '#fff3e6', bgDeep: '#ffe0c2', ink: '#c1121f', stone: '#ffd6a5', stoneDark: '#a0522d', grout: '#f2c08a', accent: '#ff6d00', glow: '#ffb703' } },
+  { section: 'Escher Remix', id: 'remix-neon-lizards', name: 'Neon Lizards', origin: 'Escher Remix', desc: 'Escher lizards in arcade colors.', kind: 'escher', motif: 'lizard', gridType: 'hex', rotations: 3, colors: 3, edgeSpec: 'lizard', palette: { bg: '#f6f0ff', bgDeep: '#e8ddfb', ink: '#1a1a1a', stone: '#e6dcf7', stoneDark: '#5a4a7a', grout: '#c9b8e8', accent: '#ff2bd6', glow: '#ffd400', c1: '#ff2bd6', c2: '#00c2ff', c3: '#ffd400' } },
+  { section: 'Escher Remix', id: 'remix-candy-butterflies', name: 'Candy Butterflies', origin: 'Escher Remix', desc: 'Butterflies in pastel candy.', kind: 'escher', motif: 'butterfly', gridType: 'hex', rotations: 6, colors: 3, edgeSpec: 'butterfly', palette: { bg: '#fff6f9', bgDeep: '#fde3ec', ink: '#3a2a3a', stone: '#fde8ef', stoneDark: '#8a6a7a', grout: '#efc8d6', accent: '#ff8fab', glow: '#ffd166', c1: '#ff8fab', c2: '#8ecae6', c3: '#ffd166' } },
+  { section: 'Escher Remix', id: 'remix-pixel-fish', name: 'Pixel Fish', origin: 'Escher Remix', desc: 'Sky and water in electric blue.', kind: 'escher', motif: 'fish', gridType: 'square', rotations: 4, colors: 2, edgeSpec: 'fish', palette: { bg: '#f4f6ff', bgDeep: '#e2e7fb', ink: '#1a1a2a', stone: '#f4f6ff', stoneDark: '#4a4f8a', grout: '#c4cbee', accent: '#3b3bff', glow: '#ffd400', c1: '#3b3bff', c2: '#fff3b0' } },
+  { section: 'Escher Remix', id: 'remix-glitch-bats', name: 'Glitch Bats', origin: 'Escher Remix', desc: 'Bats in cyan, pink and slate.', kind: 'escher', motif: 'bat', gridType: 'hex', rotations: 6, colors: 3, edgeSpec: 'bat', palette: { bg: '#f2f7f7', bgDeep: '#dff0f0', ink: '#1a1a1a', stone: '#e0f4f4', stoneDark: '#3a4a52', grout: '#b8dadb', accent: '#ff2e63', glow: '#08d9d6', c1: '#08d9d6', c2: '#ff2e63', c3: '#3a4a52' } },
+  { section: 'Escher Remix', id: 'remix-sherbet-crabs', name: 'Sherbet Crabs', origin: 'Escher Remix', desc: 'Crabs in orange and lime.', kind: 'escher', motif: 'crab', gridType: 'square', rotations: 4, colors: 2, edgeSpec: 'crab', palette: { bg: '#fff4e8', bgDeep: '#ffe4c8', ink: '#2a1a1a', stone: '#ffe7d6', stoneDark: '#7a5040', grout: '#f5cdb0', accent: '#ff7a59', glow: '#7bd389', c1: '#ff7a59', c2: '#7bd389' } }
 ];
 
 /* SOUND. Everything is synthesized, nothing to download. */
@@ -425,6 +454,7 @@ const sfx = {
     const k = Math.min(gained, 12);
     if (style === 'water') noise(0.45, 0.07, 500 + k * 60, 'bandpass', 0, 1400);
     else if (style === 'streets') { tone(95, 0.35, 'sawtooth', 0.035, 0, 150); if (gained > 3) { tone(440, 0.12, 'square', 0.025, 0.12); tone(554, 0.12, 'square', 0.02, 0.12); } }
+    else if (style === 'circuit') { if (P.current === 'AC') { tone(60, 0.3, 'sine', 0.06); tone(180, 0.3, 'sine', 0.02); } else { tone(1200, 0.05, 'square', 0.03); tone(1800, 0.06, 'square', 0.025, 0.05); } noise(0.06, 0.03, 5000, 'highpass'); }
     else if (style === 'power') { tone(60, 0.4, 'sawtooth', 0.045); tone(120, 0.4, 'square', 0.015); noise(0.08, 0.04, 4000, 'highpass', 0.02); }
     else tone(330 + k * 25, 0.18, 'sine', 0.07, 0, 440 + k * 30);
   },
@@ -669,6 +699,10 @@ function basePairsForPattern(pat) {
       return [[0,1],[2,3]];
     case 'square-cross':
       return [[0,2],[1,3]]; // straight through center
+    case 'square-circuit': case 'square-pixel':
+      return [[0,3],[1,2]];
+    case 'hex-orbit': case 'hex-neon':
+      return [[0,1],[2,3],[4,5]];
     case 'square-knot':
       return [[0,3],[1,2]]; // like quarter but with over-under styling
     case 'tri-arc':
@@ -702,6 +736,8 @@ function renderHexArc(g, edgeA, edgeB, size, pat, isBand, subtleLoops) {
   } else if (pat === 'hex-rings') {
     // Concentric arc from vertex
     d = `M ${pA.x} ${pA.y} Q ${v.x * 0.9} ${v.y * 0.9} ${pB.x} ${pB.y}`;
+  } else if (pat === 'hex-orbit') {
+    d = `M ${pA.x} ${pA.y} Q ${v.x * 1.15} ${v.y * 1.15} ${pB.x} ${pB.y}`;
   } else if (pat === 'hex-smith') {
     // Opposite edges connected via center, straight through
     d = `M ${pA.x} ${pA.y} Q 0 0 ${pB.x} ${pB.y}`;
@@ -713,6 +749,8 @@ function renderHexArc(g, edgeA, edgeB, size, pat, isBand, subtleLoops) {
     let sw = 1.4;
     if (pat === 'hex-floral' || pat === 'hex-mesh') sw = 1.0;
     if (pat === 'hex-rings') sw = 1.6;
+    if (pat === 'hex-neon') sw = 3.2;
+    if (pat === 'hex-orbit') sw = 1.8;
     path.setAttribute('stroke-width', sw);
   }
   g.appendChild(path);
@@ -757,6 +795,24 @@ function renderSquareArc(g, edgeA, edgeB, size, pat, isBand, subtleLoops) {
     path.setAttribute('d', `M ${pA.x} ${pA.y} L ${pB.x} ${pB.y}`);
     path.setAttribute('stroke-width', isBand ? (subtleLoops ? 2 : 4) : (pat === 'square-encaustic' ? 2.0 : 1.6));
     g.appendChild(path);
+    return path;
+  }
+  if (pat === 'square-circuit' || pat === 'square-pixel') {
+    const pts = pat === 'square-circuit'
+      ? [pA, { x: pA.x * 0.4, y: pA.y * 0.4 }, { x: pB.x * 0.4, y: pB.y * 0.4 }, pB]
+      : [pA, { x: pA.x * 0.5, y: pA.y * 0.5 }, { x: (pA.x + pB.x) * 0.5, y: (pA.y + pB.y) * 0.5 }, { x: pB.x * 0.5, y: pB.y * 0.5 }, pB];
+    path.setAttribute('d', 'M ' + pts.map(p => `${p.x} ${p.y}`).join(' L '));
+    path.setAttribute('stroke-width', isBand ? 5 : (pat === 'square-pixel' ? 3 : 2));
+    if (pat === 'square-pixel') path.style.strokeLinejoin = 'miter';
+    g.appendChild(path);
+    if (!isBand && pat === 'square-circuit') {
+      [pts[1], pts[2]].forEach(q => {
+        const pad = document.createElementNS(SVG_NS, 'circle');
+        pad.setAttribute('cx', q.x); pad.setAttribute('cy', q.y); pad.setAttribute('r', size * 0.045);
+        pad.setAttribute('class', 'deco'); pad.setAttribute('fill', 'var(--accent)');
+        g.appendChild(pad);
+      });
+    }
     return path;
   }
   if (pat === 'square-cross') {
@@ -1738,6 +1794,13 @@ function generatePipes(cfg, rand) {
   for (let t = 0; t < 40 && !out; t++) out = tryGenerate(cfg, rand);
   if (!out) out = tryGenerate(Object.assign({}, cfg, { rocks: 0, bridges: 0 }), rand);
   P.style = cfg.style || PIPE_STYLE_KEYS[Math.floor(rand() * PIPE_STYLE_KEYS.length)];
+  P.current = null;
+  if (P.style === 'circuit') {
+    // DC flows one way, so DC boards carry diodes. AC alternates, so no diodes.
+    P.current = cfg.current || (rand() < 0.5 ? 'AC' : 'DC');
+    const cells = out.cells.filter(c => !c.rock).length;
+    cfg = Object.assign({}, cfg, { valves: P.current === 'AC' ? 0 : Math.max(cfg.valves || 0, cfg.grid === 'tri' ? 0 : 1 + Math.floor(cells / 20)) });
+  }
   P.grid = cfg.grid; P.cells = out.cells; P.source = out.src; P.moves = 0; P.solved = false;
   if (cfg.valves) {
     P.cells.forEach(c => { c.rot = 0; });
@@ -1807,6 +1870,7 @@ function pipeTransform(cell, animate) {
   if (!cell.el) return;
   cell.el.style.transition = animate ? '' : 'none';
   cell.el.setAttribute('transform', `translate(${cell.cx} ${cell.cy}) rotate(${cell.rot * 360 / cell.n})`);
+  cell.el.querySelectorAll('.upright').forEach(t => t.setAttribute('transform', `rotate(${-(+t.dataset.base) - cell.rot * 360 / cell.n})`));
   if (!animate) { void cell.el.getBoundingClientRect(); cell.el.style.transition = ''; }
 }
 
@@ -1824,6 +1888,9 @@ const PIPE_STYLES = {
   streets: { label: 'Streets',
     base: [{ c: '#a7a79f', w: 44, hub: 1 }, { c: '#55585e', w: 36, hub: 1 }, { c: '#c9c9c0', w: 3, dash: '9 7' }],
     water: [{ c: '#f4c430', w: 3.5, dash: '9 7', flow: 1 }] },
+  circuit: { label: 'Circuit',
+    base: [{ c: '#24382c', w: 4 }],
+    water: [{ c: '#ffb347', w: 10, op: 0.35 }, { c: '#ff7a00', w: 3.5, dash: '3 7', flow: 1 }], parts: true },
   power: { label: 'Power Lines',
     base: [{ c: '#2b2b2b', w: 3 }],
     water: [{ c: '#ffd23a', w: 12, op: 0.35 }, { c: '#ffb000', w: 3.5, dash: '4 6', flow: 1 }], poles: true }
@@ -1851,9 +1918,77 @@ function drawLayers(g, waterG, segs, deg, hubScale, boost, withHub) {
   });
 }
 
-function drawPipe(parent, waterG, ends, deg, hubScale, boost, isSource) {
+/* CIRCUIT PARTS. Drawn along the x axis with the lead coming in from +x,
+   then a ground symbol behind it to close the circuit. */
+const PARTS = {
+  DC: ['led', 'resistor', 'motor', 'lamp'],
+  AC: ['lamp', 'motor', 'speaker', 'capacitor']
+};
+const PART_NAMES = { led: 'LED', resistor: 'Resistor', motor: 'Motor', lamp: 'Lamp', speaker: 'Speaker', capacitor: 'Capacitor', ground: 'Ground' };
+function cpoly(pts) { return pts.map(p => p[0].toFixed(1) + ',' + p[1].toFixed(1)).join(' '); }
+function drawPart(gb, gw, kind, r, withGround) {
+  const ink = svgEl;
+  if (kind === 'lamp') {
+    gb.appendChild(ink('circle', { r, class: 'cp-body' }));
+    gw.appendChild(ink('circle', { r: r * 0.86, class: 'cp-glow', style: 'fill:#ffd23a' }));
+    const k = r * 0.62;
+    gb.appendChild(ink('path', { d: `M${-k},${-k}L${k},${k}M${-k},${k}L${k},${-k}`, class: 'cp-line' }));
+  } else if (kind === 'led') {
+    gb.appendChild(ink('circle', { r, class: 'cp-body' }));
+    gw.appendChild(ink('circle', { r: r * 0.86, class: 'cp-glow', style: 'fill:#ff6b6b' }));
+    gb.appendChild(ink('polygon', { points: cpoly([[r * 0.38, -r * 0.42], [r * 0.38, r * 0.42], [-r * 0.32, 0]]), class: 'cp-fill' }));
+    gb.appendChild(ink('path', { d: `M${-r * 0.36},${-r * 0.45}V${r * 0.45}M${-r * 0.05},${-r * 0.6}l${-r * 0.35},${-r * 0.35}M${r * 0.25},${-r * 0.6}l${-r * 0.35},${-r * 0.35}`, class: 'cp-line' }));
+  } else if (kind === 'motor') {
+    gb.appendChild(ink('circle', { r, class: 'cp-body' }));
+    gw.appendChild(ink('circle', { r: r * 0.86, class: 'cp-glow', style: 'fill:#7ad38a' }));
+    const t = ink('text', { x: 0, y: 0, class: 'cp-text upright', 'font-size': r * 1.1 }); t.textContent = 'M'; gb.appendChild(t);
+  } else if (kind === 'resistor') {
+    gb.appendChild(ink('rect', { x: -r, y: -r * 0.5, width: r * 2, height: r, class: 'cp-clear' }));
+    const z = [[r, 0], [r * 0.75, -r * 0.4], [r * 0.45, r * 0.4], [r * 0.15, -r * 0.4], [-r * 0.15, r * 0.4], [-r * 0.45, -r * 0.4], [-r * 0.75, r * 0.4], [-r, 0]];
+    gb.appendChild(ink('polyline', { points: cpoly(z), class: 'cp-line' }));
+    gw.appendChild(ink('polyline', { points: cpoly(z), class: 'cp-hot' }));
+  } else if (kind === 'speaker') {
+    gb.appendChild(ink('rect', { x: 0, y: -r * 0.32, width: r * 0.45, height: r * 0.64, class: 'cp-body' }));
+    gb.appendChild(ink('polygon', { points: cpoly([[0, -r * 0.32], [-r * 0.55, -r * 0.8], [-r * 0.55, r * 0.8], [0, r * 0.32]]), class: 'cp-body' }));
+    gw.appendChild(ink('path', { d: `M${-r * 0.75},${-r * 0.45}q${-r * 0.3},${r * 0.45} 0,${r * 0.9}M${-r * 0.95},${-r * 0.7}q${-r * 0.45},${r * 0.7} 0,${r * 1.4}`, class: 'cp-hot' }));
+  } else if (kind === 'capacitor') {
+    gb.appendChild(ink('rect', { x: -r * 0.16, y: -r * 0.7, width: r * 0.32, height: r * 1.4, class: 'cp-clear' }));
+    gb.appendChild(ink('path', { d: `M${r * 0.16},${-r * 0.7}V${r * 0.7}M${-r * 0.16},${-r * 0.7}V${r * 0.7}`, class: 'cp-line thick' }));
+    gw.appendChild(ink('path', { d: `M${r * 0.16},${-r * 0.7}V${r * 0.7}M${-r * 0.16},${-r * 0.7}V${r * 0.7}`, class: 'cp-hot' }));
+  }
+  if (withGround) {
+    const x0 = kind === 'resistor' || kind === 'capacitor' ? -r * (kind === 'capacitor' ? 0.16 : 1) : (kind === 'speaker' ? -r * 0.55 : -r);
+    gb.appendChild(ink('path', { d: `M${x0},0H${-r * 1.45}M${-r * 1.45},${-r * 0.6}V${r * 0.6}M${-r * 1.65},${-r * 0.4}V${r * 0.4}M${-r * 1.85},${-r * 0.2}V${r * 0.2}`, class: 'cp-line' }));
+  }
+}
+function drawSource(g, half) {
+  g.appendChild(svgEl('rect', { x: -half, y: -half, width: half * 2, height: half * 2, rx: half * 0.2, class: 'cp-body' }));
+  if (P.current === 'AC') {
+    g.appendChild(svgEl('circle', { r: half * 0.75, class: 'cp-body' }));
+    g.appendChild(svgEl('path', { d: `M${-half * 0.5},0c${half * 0.17},${-half * 0.6} ${half * 0.33},${-half * 0.6} ${half * 0.5},0s${half * 0.33},${half * 0.6} ${half * 0.5},0`, class: 'cp-line' }));
+  } else {
+    g.appendChild(svgEl('path', { d: `M${-half * 0.15},${-half * 0.7}V${half * 0.7}`, class: 'cp-line' }));
+    g.appendChild(svgEl('path', { d: `M${half * 0.15},${-half * 0.38}V${half * 0.38}`, class: 'cp-line thick' }));
+    const p = svgEl('text', { x: -half * 0.55, y: -half * 0.45, class: 'cp-text', 'font-size': half * 0.6 }); p.textContent = '+'; g.appendChild(p);
+  }
+}
+
+function drawPipe(parent, waterG, ends, deg, hubScale, boost, isSource, cell) {
   const st = PIPE_STYLES[P.style] || PIPE_STYLES.classic;
   drawLayers(parent, waterG, ends.map(p => [{ x: 0, y: 0 }, p]), deg, hubScale, boost, true);
+  if (st.parts && !isSource) {
+    if (deg === 1) {
+      const list = PARTS[P.current || 'DC'];
+      const kind = list[(cell.idx * 7 + 3) % list.length];
+      const ang = Math.atan2(ends[0].y, ends[0].x) * 180 / Math.PI;
+      const gb = svgEl('g', { transform: `rotate(${ang})` }), gw = svgEl('g', { transform: `rotate(${ang})` });
+      drawPart(gb, gw, kind, cell.inr * 0.4, true);
+      gb.querySelectorAll('.upright').forEach(t => { t.dataset.base = ang; });
+      parent.appendChild(gb); waterG.appendChild(gw);
+    } else if (deg >= 3) {
+      parent.appendChild(svgEl('circle', { r: 5 * boost, class: 'cp-dot' }));
+    }
+  }
   if (st.poles && !isSource) {
     if (deg === 1) {
       parent.appendChild(svgEl('rect', { x: -9 * boost, y: -8 * boost, width: 18 * boost, height: 16 * boost, rx: 2, class: 'house' }));
@@ -1891,7 +2026,8 @@ function renderPipes() {
       const wg0 = svgEl('g', { class: 'water' }), wg1 = svgEl('g', { class: 'water' });
       const m = cell.mids;
       drawLayers(g, wg0, [[m[0], m[2]]], 0, 1, 1, false); g.appendChild(wg0);
-      g.appendChild(svgEl('line', { x1: m[1].x, y1: m[1].y, x2: m[3].x, y2: m[3].y, class: 'bridge-gap', 'stroke-width': 56 }));
+      const gapW = Math.max(...(PIPE_STYLES[P.style] || PIPE_STYLES.classic).base.map(l => l.w)) * 1.5 + 4;
+      g.appendChild(svgEl('line', { x1: m[1].x, y1: m[1].y, x2: m[3].x, y2: m[3].y, class: 'bridge-gap', 'stroke-width': gapW }));
       drawLayers(g, wg1, [[m[1], m[3]]], 0, 1, 1, false); g.appendChild(wg1);
       board.appendChild(g);
       cell.el = null; cell.waterGs = [wg0, wg1];
@@ -1904,9 +2040,11 @@ function renderPipes() {
     for (let e = 0; e < cell.n; e++) if (cell.sol & (1 << e)) ends.push(cell.mids[e]);
     const deg = ends.length;
     const waterG = svgEl('g', { class: 'water' });
-    drawPipe(g, waterG, ends, deg, hubScale, boost, cell.source);
+    drawPipe(g, waterG, ends, deg, hubScale, boost, cell.source, cell);
     g.appendChild(waterG);
-    if (cell.source) {
+    if (cell.source && P.style === 'circuit') {
+      drawSource(g, Math.min(22, cell.inr * 0.55));
+    } else if (cell.source) {
       const half = Math.min(20, cell.inr * 0.5);
       g.appendChild(svgEl('rect', { x: -half, y: -half, width: half * 2, height: half * 2, rx: half * 0.3, class: 'source-plate' }));
       g.appendChild(svgEl('circle', { r: half * 0.45, class: 'source-core' }));
@@ -1918,7 +2056,7 @@ function renderPipes() {
       const L = cell.inr * 0.5, W = cell.inr * 0.32;
       const tip = { x: dx * L, y: dy * L }, back = { x: -dx * L * 0.5, y: -dy * L * 0.5 };
       g.appendChild(svgEl('polygon', { points: `${tip.x},${tip.y} ${back.x - dy * W},${back.y + dx * W} ${back.x + dy * W},${back.y - dx * W}`, class: 'valve-arrow' }));
-      if (P.style === 'power') g.appendChild(svgEl('line', { x1: tip.x - dy * W, y1: tip.y + dx * W, x2: tip.x + dy * W, y2: tip.y - dx * W, class: 'valve-bar' }));
+      if (P.style === 'power' || P.style === 'circuit') g.appendChild(svgEl('line', { x1: tip.x - dy * W, y1: tip.y + dx * W, x2: tip.x + dy * W, y2: tip.y - dx * W, class: 'valve-bar' }));
     }
     const hit = svgEl('polygon', { points: pts, class: 'tile-hit' });
     g.appendChild(hit);
@@ -2033,7 +2171,8 @@ const LEVELS = {
 };
 function levelConfig(lv) {
   const style = PIPE_STYLE_KEYS[(lv - 1) % PIPE_STYLE_KEYS.length];
-  if (LEVELS[lv]) return Object.assign({ style }, LEVELS[lv]);
+  const current = Math.floor((lv - 1) / PIPE_STYLE_KEYS.length) % 2 ? 'AC' : 'DC';
+  if (LEVELS[lv]) return Object.assign({ style, current }, LEVELS[lv]);
   const g = Math.floor((lv - 10) / 4);
   const grid = ['square', 'hex', 'tri', 'oct'][lv % 4];
   let cols, rows, cells;
@@ -2042,7 +2181,7 @@ function levelConfig(lv) {
   else if (grid === 'tri') { cols = Math.min(11 + 2 * g, 15); rows = Math.min(6 + g, 9); cells = cols * rows; }
   else { cols = Math.min(4 + g, 5); rows = Math.min(5 + g, 7); cells = cols * rows + (cols - 1) * (rows - 1); }
   return {
-    grid, cols, rows, style,
+    grid, cols, rows, style, current,
     rocks: Math.round(cells * 0.07),
     bridges: (grid === 'square' || grid === 'oct') ? Math.min(1 + g, 3) : 0,
     valves: grid === 'tri' ? 0 : Math.max(1, Math.round(cells * 0.04)),
@@ -2065,8 +2204,46 @@ function loadLevel(lv) {
   buildControls();
   if (cfg.intro && !pipeProgress.stars[lv]) {
     showOverlay(cfg.title, '', cfg.intro, [{ label: 'Play', fn: hideOverlay }]);
-  }
+  } else maybeCircuitIntro();
 }
+
+/* CIRCUIT LEGEND */
+function legendIcon(fn) {
+  const svg = svgEl('svg', { viewBox: '-30 -30 60 60', width: 40, height: 40 });
+  const g = svgEl('g', {}), gw = svgEl('g', {});
+  fn(g, gw);
+  svg.appendChild(g);
+  return svg.outerHTML;
+}
+function circuitLegend() {
+  const cur = P.current || 'DC';
+  const items = [];
+  items.push([legendIcon(g => drawSource(g, 22)), cur === 'AC' ? 'AC source' : 'Battery (DC)']);
+  PARTS[cur].forEach(k => items.push([legendIcon((g, gw) => { g.appendChild(svgEl('path', { d: 'M28,0H14', class: 'cp-line' })); drawPart(g, gw, k, 14, false); }), PART_NAMES[k]]));
+  if (cur === 'DC') items.push([legendIcon(g => {
+    g.appendChild(svgEl('path', { d: 'M-26,0H26', class: 'cp-line' }));
+    g.appendChild(svgEl('polygon', { points: '-10,-11 -10,11 10,0', class: 'cp-fill' }));
+    g.appendChild(svgEl('path', { d: 'M10,-11V11', class: 'cp-line thick' }));
+  }), 'Diode, one way']);
+  items.push([legendIcon(g => g.appendChild(svgEl('path', { d: 'M0,-20V0M-14,0H14M-9,7H9M-4,14H4', class: 'cp-line' }))), 'Ground']);
+  const grid = items.map(([icon, name]) => `<div class="leg-item">${icon}<span>${name}</span></div>`).join('');
+  const rule = cur === 'AC'
+    ? 'AC flips direction many times a second, so this board has no diodes. Power every part.'
+    : 'DC flows one way from the battery. Diodes only pass current the way the triangle points.';
+  return `${rule}<div class="legend">${grid}</div>`;
+}
+function maybeCircuitIntro() {
+  if (P.style !== 'circuit') return;
+  const seen = store.get('atlas.seenCircuit', {});
+  if (seen[P.current]) return;
+  seen[P.current] = true; store.set('atlas.seenCircuit', seen);
+  showOverlay(`${P.current} circuit`, '', circuitLegend(), [{ label: 'Play', fn: hideOverlay }]);
+}
+styleOriginEl.addEventListener('click', () => {
+  if ((mode === 'pipes' || mode === 'rush') && P.style === 'circuit' && !(mode === 'rush' && R.running)) {
+    showOverlay(`${P.current} circuit`, '', circuitLegend(), [{ label: 'Close', fn: hideOverlay }]);
+  }
+});
 
 /* BIG BOARDS */
 const BIG = {
@@ -2088,6 +2265,7 @@ function loadBig(size) {
   updateStrip();
   refreshStats();
   buildControls();
+  maybeCircuitIntro();
 }
 function pickBig() {
   const best = store.get('atlas.bigBest', {});
@@ -2518,7 +2696,7 @@ function buildControls() {
   }
 }
 function updateStrip() {
-  const sty = (PIPE_STYLES[P.style] || PIPE_STYLES.classic).label;
+  const sty = (PIPE_STYLES[P.style] || PIPE_STYLES.classic).label + (P.current ? ' ' + P.current : '');
   const labels = { play: 'Free Play', pipes: P.big ? `${BIG[P.big].label} · ${sty}` : `Level ${P.level} · ${sty}`, rush: `Pipe Rush · ${sty}`, viz: 'Visualizer' };
   styleOriginEl.textContent = labels[mode];
 }
