@@ -140,6 +140,14 @@
   .card-title { font-family: var(--serif); font-style: italic; font-weight: 600; font-size: 28px; line-height: 1.1; }
   .card-stars { font-size: 30px; letter-spacing: 6px; color: var(--accent); margin: 10px 0 4px; min-height: 8px; }
   .card-body { font-family: var(--serif); font-size: 15px; color: var(--stone-dark); line-height: 1.4; margin: 8px 0 18px; }
+  .post { margin: -6px 0 16px; }
+  .post:empty { display: none; }
+  .post-row { display: flex; gap: 8px; justify-content: center; align-items: center; }
+  .post-tag { width: 76px; height: 36px; text-align: center; font-family: var(--serif); font-size: 20px; font-weight: 600; letter-spacing: 0.2em; text-transform: uppercase; border: 1px solid var(--grout); border-radius: 2px; background: var(--bg); color: var(--ink); }
+  .post-msg { font-size: 12px; color: var(--stone-dark); margin-top: 8px; min-height: 14px; }
+  .post-board { margin-top: 8px; text-align: left; font-size: 13px; }
+  .post-board div { display: flex; justify-content: space-between; padding: 3px 4px; border-bottom: 1px solid rgba(0,0,0,0.06); font-variant-numeric: tabular-nums; }
+  .post-board div.me { color: var(--accent); font-weight: 600; }
   .card-actions { display: flex; gap: 8px; justify-content: center; }
 </style>
 </head>
@@ -194,10 +202,12 @@
     <div class="card-title" id="ovTitle"></div>
     <div class="card-stars" id="ovStars"></div>
     <div class="card-body" id="ovBody"></div>
+    <div class="post" id="ovPost"></div>
     <div class="card-actions" id="ovActions"></div>
   </div>
 </div>
 
+<script src="https://2026-10-30-orange-scores.vercel.app/sdk.js"></script>
 <script>
 const SVG_NS = 'http://www.w3.org/2000/svg';
 
@@ -1816,7 +1826,8 @@ function pipesSolved() {
     setTimeout(() => {
       showOverlay(`Level ${P.level} clear`, '★'.repeat(stars) + '☆'.repeat(3 - stars),
         `${P.moves} moves, par ${P.par}.<br/>Three stars means par or better.`,
-        [{ label: 'Replay', alt: true, fn: () => loadLevel(P.level) }, { label: 'Next', fn: () => loadLevel(P.level + 1) }]);
+        [{ label: 'Replay', alt: true, fn: () => loadLevel(P.level) }, { label: 'Next', fn: () => loadLevel(P.level + 1) }],
+        { game: 'tile-spinner-pipes', score: totalStars(), duration: Date.now() - store.get('atlas.pipesStart', Date.now() - 60000) });
       buildControls();
     }, 900);
   } else if (mode === 'rush') {
@@ -1860,6 +1871,7 @@ function loadLevel(lv) {
   lv = Math.max(1, Math.min(lv, pipeProgress.unlocked));
   P.level = lv;
   pipeProgress.level = lv;
+  if (!store.get('atlas.pipesStart', 0)) store.set('atlas.pipesStart', Date.now());
   store.set('atlas.pipes2', pipeProgress);
   const cfg = levelConfig(lv);
   generatePipes(cfg, mulberry(lv * 7919 + 13));
@@ -1889,7 +1901,7 @@ function newRushBoard() {
 function startRush() {
   hideOverlay();
   stopRush();
-  R.time = 60; R.boards = 0; R.running = true; R.last = performance.now();
+  R.time = 60; R.boards = 0; R.running = true; R.last = performance.now(); R.started = Date.now();
   newRushBoard();
   R.timer = setInterval(() => {
     const now = performance.now();
@@ -1908,7 +1920,8 @@ function endRush() {
   const best = Math.max(store.get('atlas.rushBest', 0), R.boards);
   store.set('atlas.rushBest', best);
   showOverlay('Time', '', `Boards cleared: ${R.boards}<br/>Best run: ${best}`,
-    [{ label: 'Again', fn: startRush }]);
+    [{ label: 'Again', fn: startRush }],
+    { game: 'tile-spinner-rush', score: R.boards, duration: Date.now() - R.started });
 }
 function rushIntro() {
   stopRush();
@@ -1990,7 +2003,7 @@ function stopViz() { stopDrift(); stopTour(); if (V.mic) stopMic(); }
 
 /* OVERLAY */
 const overlay = document.getElementById('overlay');
-function showOverlay(title, stars, body, actions) {
+function showOverlay(title, stars, body, actions, post) {
   document.getElementById('ovTitle').textContent = title;
   document.getElementById('ovStars').textContent = stars;
   document.getElementById('ovBody').innerHTML = body;
@@ -2003,9 +2016,68 @@ function showOverlay(title, stars, body, actions) {
     b.addEventListener('click', a.fn);
     act.appendChild(b);
   });
+  renderPost(post);
   overlay.classList.add('open');
 }
+
+/* SCORE HUB
+   Shared score service. A finished run can be posted with a three letter
+   tag; the top of that board shows right under it. */
+function renderPost(post) {
+  const box = document.getElementById('ovPost');
+  box.innerHTML = '';
+  if (!post || !window.Scores || !(post.score >= 1)) return;
+  const row = document.createElement('div');
+  row.className = 'post-row';
+  const inp = document.createElement('input');
+  inp.className = 'post-tag'; inp.maxLength = 3; inp.placeholder = 'TAG';
+  inp.value = store.get('atlas.tag', '');
+  inp.autocapitalize = 'characters'; inp.spellcheck = false;
+  const btn = document.createElement('button');
+  btn.className = 'btn'; btn.textContent = 'Post score';
+  row.appendChild(inp); row.appendChild(btn);
+  const msg = document.createElement('div'); msg.className = 'post-msg';
+  const list = document.createElement('div'); list.className = 'post-board';
+  box.appendChild(row); box.appendChild(msg); box.appendChild(list);
+  const showBoard = myId => {
+    Scores.board(post.game, 5).then(r => {
+      list.innerHTML = '';
+      const rows = (r && r.ok && (r.entries || r.board || r.top)) || [];
+      rows.forEach((e, i) => {
+        const d = document.createElement('div');
+        if (myId && e.id === myId) d.className = 'me';
+        const a = document.createElement('span'); a.textContent = `${i + 1}. ${e.tag}`;
+        const b = document.createElement('span'); b.textContent = e.score;
+        d.appendChild(a); d.appendChild(b);
+        list.appendChild(d);
+      });
+    });
+  };
+  showBoard();
+  btn.addEventListener('click', () => {
+    const tag = inp.value.trim();
+    if (!tag) { msg.textContent = 'Enter up to three letters.'; return; }
+    store.set('atlas.tag', tag.toUpperCase());
+    btn.disabled = true; msg.textContent = 'Posting...';
+    Scores.submit({ game: post.game, tag, score: post.score, duration: Math.max(1000, Math.floor(post.duration)) }).then(r => {
+      if (r && r.ok) {
+        msg.textContent = r.rank ? `Posted. Rank ${r.rank}.` : 'Posted.';
+        row.remove();
+        showBoard(r.entry && r.entry.id);
+      } else {
+        btn.disabled = false;
+        const e = r && r.error;
+        msg.textContent = e === 'slow_down' ? 'Wait a few seconds and try again.'
+          : e === 'tag_rejected' ? 'That tag was rejected. Try another.'
+          : e === 'offline' ? 'Score hub unreachable. Try again.'
+          : 'Score was not accepted.';
+      }
+    });
+  });
+}
+function totalStars() { return Object.values(pipeProgress.stars).reduce((a, b) => a + b, 0); }
 function hideOverlay() { overlay.classList.remove('open'); }
+overlay.addEventListener('click', e => { if (e.target === overlay) hideOverlay(); });
 
 /* VAULT (Escher skins in Play)
    Five ringed dots hide a digit each. Spin the tiles around a dot until
@@ -2022,7 +2094,7 @@ function vaultWanted() { return mode === 'play' && currentStyle.kind === 'escher
 
 function setupVault() {
   VAULT.active = vaultWanted();
-  VAULT.spots = []; VAULT.entry = []; VAULT.guesses = 0; VAULT.done = false; VAULT.msg = '';
+  VAULT.spots = []; VAULT.entry = []; VAULT.guesses = 0; VAULT.done = false; VAULT.msg = ''; VAULT.started = Date.now();
   if (!VAULT.active) return;
   const gt = currentStyle.gridType;
   const need = gt === 'hex' ? 3 : gt === 'square' ? 4 : 6;
@@ -2136,8 +2208,11 @@ function tryUnlock() {
     score += 100; refreshStats(); flashB();
     renderVaultPanel();
     const code = VAULT.spots.map(s => s.digit).join(' ');
-    showOverlay('Vault cracked', '', `Code ${code}<br/>${VAULT.guesses === 1 ? 'First try.' : `Cracked in ${VAULT.guesses} tries.`}`,
-      [{ label: 'New vault', fn: () => { hideOverlay(); buildBoard(); } }]);
+    const secs = Math.round((Date.now() - VAULT.started) / 1000);
+    const vscore = Math.max(1, 1000 - 100 * (VAULT.guesses - 1) - Math.floor(secs / 3));
+    showOverlay('Vault cracked', '', `Code ${code}<br/>${VAULT.guesses === 1 ? 'First try' : `${VAULT.guesses} tries`}, ${secs} seconds.<br/>Vault score ${vscore}.`,
+      [{ label: 'New vault', fn: () => { hideOverlay(); buildBoard(); } }],
+      { game: 'tile-spinner-vault', score: vscore, duration: Date.now() - VAULT.started });
     return;
   }
   VAULT.msg = `${placed} of ${VAULT.spots.length} in the right place.`;
