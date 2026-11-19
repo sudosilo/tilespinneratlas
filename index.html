@@ -64,7 +64,8 @@
   .creature { stroke: var(--ink); stroke-width: 0.6; stroke-linejoin: round; pointer-events: none; transition: fill 0.5s, stroke 0.5s; }
   .creature-eye { pointer-events: none; }
   .vertex-glow { fill: var(--glow); opacity: 0; transition: opacity 0.4s; pointer-events: none; }
-  .vertex-glow.lit { opacity: 0.5; }
+  .vertex-glow.lit { opacity: 0.55; }
+  .vertex-glow.near { opacity: 0.18; }
   .wang-edge-band { fill: none; stroke: var(--accent); stroke-width: 3; opacity: 0; transition: opacity 0.4s, stroke 0.5s; pointer-events: none; }
   .wang-edge-band.lit { opacity: 0.6; stroke: var(--glow); }
   .tile-group { transition: transform 0.32s cubic-bezier(0.34, 1.56, 0.64, 1); cursor: pointer; }
@@ -1377,49 +1378,42 @@ function buildVertexGlows() {
   }
 }
 
+/* How close a vertex is to lighting up. have/need drives the vault pips,
+   ok is the yellow dot itself, possible says the vertex can ever light. */
+function vertexProgress(vg) {
+  const gt = currentStyle.gridType;
+  const ts = vg.tiles.map(tr => tileMap.get(`${tr.col},${tr.row}`));
+  if (ts.some(t => !t)) return { have: 0, need: vg.tiles.length, ok: false, possible: false };
+  if (gt === 'hex') {
+    const colors = new Set(ts.map(t => tileColorIndex(t.col, t.row, 3, 'hex')));
+    const have = ts.filter((t, i) => (t.rot * 2) % 6 === vg.tiles[i].vertexIdx).length;
+    const possible = vg.tiles.length === 3 && colors.size === 3 && vg.tiles.every(tr => tr.vertexIdx % 2 === 0);
+    return { have, need: ts.length, ok: possible && have === ts.length, possible };
+  }
+  if (gt === 'square') {
+    const r = ts.map(t => t.rot);
+    let have = 0;
+    const n = currentStyle.rotations;
+    for (let a = 0; a < n; a++) for (let b = 0; b < n; b++) {
+      if (a === b) continue;
+      have = Math.max(have, (r[0] === a) + (r[1] === b) + (r[2] === b) + (r[3] === a));
+    }
+    const ok = r[0] === r[3] && r[1] === r[2] && r[0] !== r[1];
+    return { have, need: 4, ok, possible: ts.length === 4 };
+  }
+  const have = ts.filter((t, i) => (t.rot % 3) === vg.tiles[i].vertexIdx).length;
+  const possible = ts.length === 6;
+  return { have, need: ts.length, ok: possible && have === ts.length, possible };
+}
+
 function detectVertexMatches() {
   let matches = 0;
-  vertexGlows.forEach((vg, key) => {
-    let isMatch = false;
-    const gt = currentStyle.gridType;
-    if (gt === 'hex' && currentStyle.colors === 3) {
-      const colors = new Set();
-      let allPointing = true;
-      for (const tref of vg.tiles) {
-        const t = tileMap.get(`${tref.col},${tref.row}`);
-        if (!t) { allPointing = false; break; }
-        colors.add(tileColorIndex(t.col, t.row, 3, 'hex'));
-        const headVertex = (t.rot * 2) % 6;
-        if (headVertex !== tref.vertexIdx) allPointing = false;
-      }
-      isMatch = (colors.size === 3) && allPointing;
-    } else if (gt === 'hex') {
-      const colors = new Set();
-      for (const tref of vg.tiles) {
-        const t = tileMap.get(`${tref.col},${tref.row}`);
-        if (!t) continue;
-        colors.add(tileColorIndex(t.col, t.row, currentStyle.colors, 'hex'));
-      }
-      isMatch = colors.size >= 3;
-    } else if (gt === 'square' && currentStyle.colors === 2) {
-      const rots = vg.tiles.map(tref => {
-        const t = tileMap.get(`${tref.col},${tref.row}`);
-        return t ? t.rot : -1;
-      });
-      if (rots.every(r => r >= 0)) {
-        isMatch = (rots[0] === rots[3]) && (rots[1] === rots[2]) && (rots[0] !== rots[1]);
-      }
-    } else if (gt === 'triangle') {
-      const colors = new Set();
-      for (const tref of vg.tiles) {
-        const t = tileMap.get(`${tref.col},${tref.row}`);
-        if (!t) continue;
-        colors.add(tileColorIndex(t.col, t.row, 3, 'triangle'));
-      }
-      isMatch = colors.size === 3;
-    }
-    if (isMatch) { vg.el.classList.add('lit'); matches++; }
-    else vg.el.classList.remove('lit');
+  vertexGlows.forEach(vg => {
+    const pr = vertexProgress(vg);
+    vg.progress = pr;
+    vg.el.classList.toggle('lit', pr.ok);
+    vg.el.classList.toggle('near', !pr.ok && pr.possible && pr.have === pr.need - 1);
+    if (pr.ok) matches++;
   });
   if (matches > loopCount) {
     const gained = matches - loopCount;
@@ -2032,7 +2026,7 @@ function setupVault() {
   if (!VAULT.active) return;
   const gt = currentStyle.gridType;
   const need = gt === 'hex' ? 3 : gt === 'square' ? 4 : 6;
-  const cands = [...vertexGlows.values()].filter(v => v.tiles.length === need && v.tiles.every(t => tileMap.has(`${t.col},${t.row}`)));
+  const cands = [...vertexGlows.values()].filter(v => v.tiles.length === need && vertexProgress(v).possible && !vertexProgress(v).ok);
   for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
   const used = new Set(), chosen = [];
   for (let pass = 0; pass < 2 && chosen.length < 5; pass++) {
@@ -2051,8 +2045,6 @@ function setupVault() {
   const n = currentStyle.rotations;
   chosen.forEach((v, i) => {
     const tl = v.tiles.map(t => tileMap.get(`${t.col},${t.row}`));
-    const targets = tl.map(() => Math.floor(Math.random() * n));
-    if (n > 1 && tl.every((t, k) => t.rot === targets[k])) targets[0] = (targets[0] + 1) % n;
     const color = VAULT_COLORS[i];
     const g = svgEl('g', { class: 'vault-spot' });
     const R = TILE_SIZE * 0.27;
@@ -2068,7 +2060,7 @@ function setupVault() {
     txt.textContent = digits[i];
     g.appendChild(txt);
     board.appendChild(g);
-    VAULT.spots.push({ tiles: tl, targets, color, digit: digits[i], found: false, g, ring, pips });
+    VAULT.spots.push({ vg: v, tiles: tl, color, digit: digits[i], found: false, g, ring, pips });
   });
   renderVaultPanel();
   updateVault();
@@ -2079,9 +2071,9 @@ function updateVault() {
   let newly = false;
   VAULT.spots.forEach(s => {
     if (s.found) return;
-    const count = s.tiles.filter((t, k) => t.rot === s.targets[k]).length;
-    s.pips.forEach((p, k) => { p.style.fill = k < count ? s.color : ''; });
-    if (count === s.tiles.length) {
+    const pr = vertexProgress(s.vg);
+    s.pips.forEach((p, k) => { p.style.fill = k < pr.have ? s.color : ''; });
+    if (pr.ok) {
       s.found = true; newly = true;
       s.g.classList.add('found');
       s.ring.style.fill = s.color;
