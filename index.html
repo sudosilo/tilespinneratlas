@@ -128,8 +128,10 @@
   .vault-cells .btn { flex-shrink: 0; }
   .shake { animation: shake 0.4s; }
   @keyframes shake { 0%,100% { transform: translateX(0); } 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
-  .vault-ring { fill: var(--bg); stroke-width: 2.5; pointer-events: none; transition: fill 0.4s; }
+  .vault-ring { fill: var(--bg); stroke: var(--stone-dark); stroke-width: 2; pointer-events: none; transition: fill 0.4s, stroke 0.4s, opacity 0.4s; }
   .vault-pip { fill: var(--grout); pointer-events: none; transition: fill 0.3s, opacity 0.3s; }
+  .vault-pip.on { fill: var(--ink); }
+  .vault-spot.empty .vault-ring { fill: none; stroke-dasharray: 2 3; opacity: 0.45; }
   .vault-digit { font-family: var(--sans); font-weight: 700; fill: #fff; text-anchor: middle; dominant-baseline: central; opacity: 0; transition: opacity 0.4s; pointer-events: none; }
   .vault-spot.found .vault-digit { opacity: 1; }
 
@@ -428,7 +430,7 @@ function updateHint() {
     const allFound = VAULT.spots.length && VAULT.spots.every(s => s.found);
     if (VAULT.msg) hintEl.innerHTML = VAULT.msg + '<br/>Try another order.';
     else if (allFound) hintEl.innerHTML = VAULT.hard ? 'All five found.<br/>Guess the order to crack it.' : 'All five found.<br/>Put each digit under its color.';
-    else hintEl.innerHTML = 'Spin tiles around a ringed dot.<br/>Fill its pips to reveal a digit.';
+    else hintEl.innerHTML = 'Crack rings to find the five digits.<br/>Most rings are empty decoys.';
   } else if (currentStyle.kind === 'wang') {
     hintEl.innerHTML = 'Tap to cycle. Match colored<br/>edges with neighbors.';
   } else {
@@ -2098,7 +2100,8 @@ function setupVault() {
   if (!VAULT.active) return;
   const gt = currentStyle.gridType;
   const need = gt === 'hex' ? 3 : gt === 'square' ? 4 : 6;
-  const cands = [...vertexGlows.values()].filter(v => v.tiles.length === need && vertexProgress(v).possible && !vertexProgress(v).ok);
+  const allC = [...vertexGlows.values()].filter(v => v.tiles.length === need && vertexProgress(v).possible);
+  const cands = allC.filter(v => !vertexProgress(v).ok);
   for (let i = cands.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [cands[i], cands[j]] = [cands[j], cands[i]]; }
   const used = new Set(), chosen = [];
   for (let pass = 0; pass < 2 && chosen.length < 5; pass++) {
@@ -2114,43 +2117,58 @@ function setupVault() {
   }
   const digits = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9];
   for (let i = digits.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [digits[i], digits[j]] = [digits[j], digits[i]]; }
-  const n = currentStyle.rotations;
-  chosen.forEach((v, i) => {
+  // Every junction that can light gets a blank ring. Five hide a digit,
+  // the rest are decoys, and only cracking a ring shows which it is.
+  VAULT.rings = [];
+  const R = TILE_SIZE * 0.24;
+  allC.forEach(v => {
+    const i = chosen.indexOf(v);
     const tl = v.tiles.map(t => tileMap.get(`${t.col},${t.row}`));
-    const color = VAULT_COLORS[i];
     const g = svgEl('g', { class: 'vault-spot' });
-    const R = TILE_SIZE * 0.27;
-    const ring = svgEl('circle', { cx: v.pos.x, cy: v.pos.y, r: R, class: 'vault-ring', stroke: color });
+    const ring = svgEl('circle', { cx: v.pos.x, cy: v.pos.y, r: R, class: 'vault-ring' });
     g.appendChild(ring);
     const pips = tl.map((t, k) => {
       const a = -Math.PI / 2 + k * 2 * Math.PI / tl.length;
-      const p = svgEl('circle', { cx: v.pos.x + Math.cos(a) * R * 0.62, cy: v.pos.y + Math.sin(a) * R * 0.62, r: R * 0.17, class: 'vault-pip' });
+      const p = svgEl('circle', { cx: v.pos.x + Math.cos(a) * R * 0.62, cy: v.pos.y + Math.sin(a) * R * 0.62, r: R * 0.16, class: 'vault-pip' });
       g.appendChild(p);
       return p;
     });
-    const txt = svgEl('text', { x: v.pos.x, y: v.pos.y, class: 'vault-digit', 'font-size': R * 1.25 });
-    txt.textContent = digits[i];
+    const txt = svgEl('text', { x: v.pos.x, y: v.pos.y, class: 'vault-digit', 'font-size': R * 1.3 });
+    txt.textContent = i >= 0 ? digits[i] : '';
     g.appendChild(txt);
     board.appendChild(g);
-    VAULT.spots.push({ vg: v, tiles: tl, color, digit: digits[i], found: false, g, ring, pips });
+    const ringObj = { vg: v, tiles: tl, g, ring, pips, found: false, real: i >= 0 };
+    if (i >= 0) {
+      Object.assign(ringObj, { color: VAULT_COLORS[i], digit: digits[i] });
+      VAULT.spots[i] = ringObj;
+    }
+    VAULT.rings.push(ringObj);
   });
+  VAULT.spots = VAULT.spots.filter(Boolean);
   renderVaultPanel();
   updateVault();
+  updateHint();
 }
 
 function updateVault() {
   if (!VAULT.active) return;
   let newly = false;
-  VAULT.spots.forEach(s => {
+  (VAULT.rings || []).forEach(s => {
     if (s.found) return;
     const pr = vertexProgress(s.vg);
-    s.pips.forEach((p, k) => { p.style.fill = k < pr.have ? s.color : ''; });
+    s.pips.forEach((p, k) => p.classList.toggle('on', k < pr.have));
     if (pr.ok) {
-      s.found = true; newly = true;
-      s.g.classList.add('found');
-      s.ring.style.fill = s.color;
+      s.found = true;
       s.pips.forEach(p => p.style.opacity = '0');
-      if (navigator.vibrate) navigator.vibrate(30);
+      if (s.real) {
+        newly = true;
+        s.g.classList.add('found');
+        s.ring.style.fill = s.color;
+        s.ring.style.stroke = s.color;
+        if (navigator.vibrate) navigator.vibrate(30);
+      } else {
+        s.g.classList.add('empty');
+      }
     }
   });
   if (newly) { flashB(); renderVaultPanel(); updateHint(); }
