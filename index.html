@@ -26,6 +26,12 @@
   .topbar { display: flex; justify-content: space-between; align-items: center; padding: 12px 16px 6px; flex-shrink: 0; }
   .menu-btn { background: transparent; border: none; width: 36px; height: 36px; display: flex; flex-direction: column; justify-content: center; align-items: center; gap: 5px; cursor: pointer; padding: 0; }
   .menu-btn span { display: block; width: 20px; height: 1.5px; background: var(--ink); transition: background 0.3s; }
+  .top-left { display: flex; align-items: center; gap: 4px; }
+  .sound-btn { background: transparent; border: none; width: 36px; height: 36px; color: var(--ink); cursor: pointer; padding: 0; display: flex; align-items: center; justify-content: center; }
+  .sound-btn .mute { display: none; }
+  .sound-btn.off .mute { display: inline; }
+  .sound-btn.off .waves { display: none; }
+  .sound-btn.off { opacity: 0.5; }
   .title { font-family: var(--serif); font-style: italic; font-weight: 600; font-size: 20px; color: var(--ink); transition: color 0.5s; }
   .stats { display: flex; gap: 14px; align-items: baseline; }
   .stat { display: flex; flex-direction: column; align-items: flex-end; line-height: 1; min-width: 44px; }
@@ -80,6 +86,11 @@
   .phub { stroke: none; pointer-events: none; }
   .water.on .flow { animation: flow 0.9s linear infinite; }
   @keyframes flow { to { stroke-dashoffset: -20; } }
+  .valve-arrow { fill: var(--accent); stroke: var(--ink); stroke-width: 1.5; stroke-linejoin: round; pointer-events: none; }
+  .ps-water .valve-arrow { fill: #c0392b; stroke: #56636d; }
+  .ps-streets .valve-arrow { fill: #ffffff; stroke: none; }
+  .ps-power .valve-arrow { fill: #2b2b2b; stroke: none; }
+  .valve-bar { stroke: #2b2b2b; stroke-width: 3; pointer-events: none; }
   .pole { fill: #7a5a3a; stroke: #2b2b2b; stroke-width: 1.5; pointer-events: none; }
   .house { fill: #f6f3ec; stroke: #2b2b2b; stroke-width: 2; pointer-events: none; }
   .house-lit { fill: #ffd23a; pointer-events: none; }
@@ -166,7 +177,10 @@
 <body>
 
 <div class="topbar">
-  <button class="menu-btn" id="menuBtn" aria-label="Skins"><span></span><span></span><span></span></button>
+  <div class="top-left">
+    <button class="menu-btn" id="menuBtn" aria-label="Skins"><span></span><span></span><span></span></button>
+    <button class="sound-btn" id="soundBtn" aria-label="Sound"><svg viewBox="0 0 24 24" width="22" height="22"><path d="M4 9h4l5-4v14l-5-4H4z" fill="currentColor"/><path class="waves" d="M16 8.5a5 5 0 0 1 0 7M18.5 6a8.5 8.5 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><path class="mute" d="M16 9l6 6M22 9l-6 6" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg></button>
+  </div>
   <div class="title">Atlas</div>
   <div class="stats">
     <div class="stat"><div class="stat-label" id="labelA">Matches</div><div class="stat-value" id="statA">0</div></div>
@@ -363,11 +377,73 @@ const STYLES = [
                accent: '#2a5a7a', glow: '#c8a83a', c1: '#2a5a7a', c2: '#7a3a4a', c3: '#3a6a4a' }}
 ];
 
+/* SOUND. Everything is synthesized, nothing to download. */
+const SND = { on: true, ctx: null, noiseBuf: null };
+function actx() {
+  if (!SND.ctx) { try { SND.ctx = new (window.AudioContext || window.webkitAudioContext)(); } catch (e) { return null; } }
+  if (SND.ctx.state === 'suspended') SND.ctx.resume();
+  return SND.ctx;
+}
+document.addEventListener('pointerdown', () => { if (SND.on) actx(); }, { passive: true });
+function tone(freq, dur, type, vol, when, slideTo) {
+  if (!SND.on) return;
+  const c = actx(); if (!c) return;
+  const t = c.currentTime + (when || 0);
+  const o = c.createOscillator(), g = c.createGain();
+  o.type = type || 'sine';
+  o.frequency.setValueAtTime(freq, t);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(slideTo, t + dur);
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol || 0.1, t + 0.01);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(c.destination);
+  o.start(t); o.stop(t + dur + 0.05);
+}
+function noise(dur, vol, freq, ftype, when, freqTo) {
+  if (!SND.on) return;
+  const c = actx(); if (!c) return;
+  if (!SND.noiseBuf) {
+    SND.noiseBuf = c.createBuffer(1, c.sampleRate, c.sampleRate);
+    const d = SND.noiseBuf.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  const t = c.currentTime + (when || 0);
+  const src = c.createBufferSource(); src.buffer = SND.noiseBuf; src.loop = true;
+  const f = c.createBiquadFilter(); f.type = ftype || 'lowpass'; f.frequency.setValueAtTime(freq, t);
+  if (freqTo) f.frequency.exponentialRampToValueAtTime(freqTo, t + dur);
+  const g = c.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(vol, t + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + dur);
+  src.connect(f); f.connect(g); g.connect(c.destination);
+  src.start(t); src.stop(t + dur + 0.05);
+}
+const sfx = {
+  click() { tone(1400, 0.03, 'square', 0.03); tone(420, 0.06, 'triangle', 0.06, 0.004); },
+  lock() { tone(180, 0.08, 'square', 0.05); tone(260, 0.06, 'square', 0.04, 0.05); },
+  flow(style, gained) {
+    const k = Math.min(gained, 12);
+    if (style === 'water') noise(0.45, 0.07, 500 + k * 60, 'bandpass', 0, 1400);
+    else if (style === 'streets') { tone(95, 0.35, 'sawtooth', 0.035, 0, 150); if (gained > 3) { tone(440, 0.12, 'square', 0.025, 0.12); tone(554, 0.12, 'square', 0.02, 0.12); } }
+    else if (style === 'power') { tone(60, 0.4, 'sawtooth', 0.045); tone(120, 0.4, 'square', 0.015); noise(0.08, 0.04, 4000, 'highpass', 0.02); }
+    else tone(330 + k * 25, 0.18, 'sine', 0.07, 0, 440 + k * 30);
+  },
+  match() { tone(784, 0.12, 'sine', 0.07); tone(1046, 0.18, 'sine', 0.06, 0.07); },
+  solve() { [523, 659, 784, 1046].forEach((f, i) => tone(f, 0.3, 'triangle', 0.08, i * 0.09)); },
+  digit() { tone(880, 0.12, 'sine', 0.08); tone(1320, 0.25, 'sine', 0.07, 0.08); },
+  decoy() { tone(160, 0.18, 'sine', 0.1, 0, 90); },
+  wrong() { tone(200, 0.25, 'sawtooth', 0.05, 0, 140); },
+  unlock() { tone(300, 0.1, 'square', 0.05); [523, 659, 784, 1046, 1318].forEach((f, i) => tone(f, 0.35, 'triangle', 0.08, 0.1 + i * 0.08)); },
+  tick() { tone(1000, 0.04, 'square', 0.04); },
+  timeup() { tone(330, 0.5, 'sawtooth', 0.06, 0, 110); }
+};
+
 const store = {
   get(k, d) { try { const v = localStorage.getItem(k); return v ? JSON.parse(v) : d; } catch (e) { return d; } },
   set(k, v) { try { localStorage.setItem(k, JSON.stringify(v)); } catch (e) {} }
 };
 
+SND.on = store.get('atlas.sound', true);
 let currentStyle = STYLES.find(s => s.id === store.get('atlas.skin', '')) || STYLES[0];
 let mode = store.get('atlas.mode', 'play');
 if (!['play', 'pipes', 'rush', 'viz'].includes(mode)) mode = 'play';
@@ -439,7 +515,7 @@ function updateHint() {
   } else if (currentStyle.kind === 'escher') {
     const allFound = VAULT.spots.length && VAULT.spots.every(s => s.found);
     if (VAULT.msg) hintEl.innerHTML = VAULT.msg + '<br/>Try another order.';
-    else if (allFound) hintEl.innerHTML = VAULT.hard ? 'All five found.<br/>Guess the order to crack it.' : 'All five found.<br/>Put each digit under its color.';
+    else if (allFound) hintEl.innerHTML = ['All five found.<br/>Put each digit under its color.', 'All five found. Colors repeat,<br/>so test which goes where.', 'All five found. Two colors only,<br/>so test which goes where.', 'All five found. No color clues.<br/>Guess the order to crack it.'][VAULT.diff];
     else hintEl.innerHTML = 'Crack rings to find the five digits.<br/>Most rings are empty decoys.';
   } else if (currentStyle.kind === 'wang') {
     hintEl.innerHTML = 'Tap to cycle. Match colored<br/>edges with neighbors.';
@@ -1199,6 +1275,7 @@ function setTileRot(tile, newRot, animate) {
 
 function rotateTile(tile) {
   if (mode === 'viz') { vizSpins++; refreshStats(); }
+  else sfx.click();
   if (currentStyle.kind === 'wang') {
     tile.wangConfig = (tile.wangConfig + 1) % WANG_CONFIGS.length;
     updateWangColors(tile);
@@ -1326,6 +1403,7 @@ function detectLoops() {
     const arcsInLoops = loopsFound.reduce((s, l) => s + l.length, 0);
     score += gained * 10 + arcsInLoops;
     flashB();
+    if (mode === 'play') sfx.match();
     totalLoops += gained;
   }
   loopCount = newCount; refreshStats();
@@ -1442,6 +1520,7 @@ function detectVertexMatches() {
     const gained = matches - loopCount;
     score += gained * 15;
     flashB();
+    if (mode === 'play') sfx.match();
     totalLoops += gained;
   }
   loopCount = matches; refreshStats();
@@ -1472,6 +1551,7 @@ function detectWangMatches() {
     const gained = matches - loopCount;
     score += gained * 5;
     flashB();
+    if (mode === 'play') sfx.match();
     totalLoops += gained;
   }
   loopCount = matches; refreshStats();
@@ -1505,6 +1585,8 @@ function maskPeriod(mask, n) {
   return n;
 }
 function bitCount(m) { let c = 0; while (m) { c += m & 1; m >>= 1; } return c; }
+function valveIn(cell) { return (cell.vin + cell.rot % cell.n) % cell.n; }
+function valveOut(cell) { return (cell.vout + cell.rot % cell.n) % cell.n; }
 function pipeMask(cell) {
   if (cell.rock) return 0;
   if (cell.bridge) return 15;
@@ -1657,13 +1739,25 @@ function generatePipes(cfg, rand) {
   if (!out) out = tryGenerate(Object.assign({}, cfg, { rocks: 0, bridges: 0 }), rand);
   P.style = cfg.style || PIPE_STYLE_KEYS[Math.floor(rand() * PIPE_STYLE_KEYS.length)];
   P.grid = cfg.grid; P.cells = out.cells; P.source = out.src; P.moves = 0; P.solved = false;
+  if (cfg.valves) {
+    P.cells.forEach(c => { c.rot = 0; });
+    const st0 = pipeState();
+    const cands = P.cells.filter(c => !c.source && !c.rock && !c.bridge && !c.fixed && c.n % 2 === 0 && bitCount(c.sol) === 2 &&
+      [...Array(c.n).keys()].some(e => (c.sol & (1 << e)) && (c.sol & (1 << ((e + c.n / 2) % c.n)))));
+    for (let k = 0; k < cfg.valves && cands.length; k++) {
+      const c = cands.splice(Math.floor(rand() * cands.length), 1)[0];
+      const vin = st0.entry.get(c.idx + ':0');
+      if (vin === undefined) continue;
+      c.valve = true; c.vin = vin; c.vout = (vin + c.n / 2) % c.n;
+    }
+  }
   for (let tries = 0; tries < 20; tries++) {
     let par = 0;
     P.cells.forEach(cell => {
       cell.rot = 0;
       if (cell.rock || cell.bridge || cell.fixed) return;
       cell.rot = Math.floor(rand() * cell.n);
-      const p = maskPeriod(cell.sol, cell.n);
+      const p = cell.valve ? cell.n : maskPeriod(cell.sol, cell.n);
       par += (p - (cell.rot % p)) % p;
     });
     P.par = par;
@@ -1675,20 +1769,23 @@ function pipeState() {
   const depth = new Map();
   const nodeKey = (cell, g) => cell.idx + ':' + g;
   const start = nodeKey(P.source, 0);
+  const entry = new Map();
   depth.set(start, 0);
   const q = [[P.source, 0]];
   while (q.length) {
     const [cur, g] = q.shift();
     const d = depth.get(nodeKey(cur, g));
     const m = pipeMask(cur);
-    const exits = cur.bridge ? [g, g + 2] : [...Array(cur.n).keys()].filter(e => m & (1 << e));
+    const exits = cur.bridge ? [g, g + 2] : cur.valve ? [valveOut(cur)] : [...Array(cur.n).keys()].filter(e => m & (1 << e));
     for (const e of exits) {
       const nb = cur.nb[e];
       if (!nb || !(pipeMask(nb.cell) & (1 << nb.e))) continue;
+      if (nb.cell.valve && nb.e !== valveIn(nb.cell)) continue;
       const ng = nb.cell.bridge ? nb.e % 2 : 0;
       const k = nodeKey(nb.cell, ng);
       if (depth.has(k)) continue;
       depth.set(k, d + 1);
+      entry.set(k, nb.e);
       q.push([nb.cell, ng]);
     }
   }
@@ -1703,7 +1800,7 @@ function pipeState() {
       if (!nb || !(pipeMask(nb.cell) & (1 << nb.e))) leaks++;
     }
   });
-  return { depth, leaks, solved: depth.size === need && leaks === 0 };
+  return { depth, entry, leaks, solved: depth.size === need && leaks === 0 };
 }
 
 function pipeTransform(cell, animate) {
@@ -1769,6 +1866,7 @@ function drawPipe(parent, waterG, ends, deg, hubScale, boost, isSource) {
 }
 
 function renderPipes() {
+  P.filled = 0;
   board.innerHTML = '';
   board.classList.toggle('solved', P.solved);
   PIPE_STYLE_KEYS.forEach(k => board.classList.toggle('ps-' + k, P.style === k));
@@ -1815,6 +1913,13 @@ function renderPipes() {
     } else if (deg === 1 && (PIPE_STYLES[P.style] || PIPE_STYLES.classic).drain) {
       g.appendChild(svgEl('circle', { r: 4.5 * hubScale, class: 'drain' }));
     }
+    if (cell.valve) {
+      const o = cell.mids[cell.vout], len = Math.hypot(o.x, o.y), dx = o.x / len, dy = o.y / len;
+      const L = cell.inr * 0.5, W = cell.inr * 0.32;
+      const tip = { x: dx * L, y: dy * L }, back = { x: -dx * L * 0.5, y: -dy * L * 0.5 };
+      g.appendChild(svgEl('polygon', { points: `${tip.x},${tip.y} ${back.x - dy * W},${back.y + dx * W} ${back.x + dy * W},${back.y - dx * W}`, class: 'valve-arrow' }));
+      if (P.style === 'power') g.appendChild(svgEl('line', { x1: tip.x - dy * W, y1: tip.y + dx * W, x2: tip.x + dy * W, y2: tip.y - dx * W, class: 'valve-bar' }));
+    }
     const hit = svgEl('polygon', { points: pts, class: 'tile-hit' });
     g.appendChild(hit);
     board.appendChild(g);
@@ -1829,6 +1934,7 @@ function renderPipes() {
         if (P.solved || cell.fixed) return;
         cell.locked = !cell.locked;
         g.classList.toggle('locked', cell.locked);
+        sfx.lock();
         if (navigator.vibrate) navigator.vibrate(15);
       }, 420);
     });
@@ -1840,7 +1946,7 @@ function renderPipes() {
     hit.addEventListener('pointercancel', cancel);
     hit.addEventListener('contextmenu', ev => ev.preventDefault());
   });
-  showFlow();
+  P.filled = showFlow().depth.size;
 }
 
 function showFlow() {
@@ -1862,11 +1968,15 @@ function tapPipe(cell) {
   if (mode === 'rush' && !R.running) return;
   cell.rot++;
   P.moves++;
+  sfx.click();
   pipeTransform(cell, true);
   refreshStats();
   clearTimeout(flowTimer);
   flowTimer = setTimeout(() => {
+    const before = P.filled || 0;
     const st = showFlow();
+    P.filled = st.depth.size;
+    if (P.filled > before && !st.solved) sfx.flow(P.style, P.filled - before);
     if (st.solved && !P.solved) pipesSolved();
   }, 260);
 }
@@ -1874,6 +1984,7 @@ function tapPipe(cell) {
 function pipesSolved() {
   P.solved = true;
   board.classList.add('solved');
+  sfx.solve();
   flashB();
   if (mode === 'pipes' && P.big) {
     const ms = Date.now() - P.bigStart;
@@ -1881,7 +1992,8 @@ function pipesSolved() {
     const isBest = !best[P.big] || ms < best[P.big];
     if (isBest) { best[P.big] = ms; store.set('atlas.bigBest', best); }
     const t = `${Math.floor(ms / 60000)}:${String(Math.floor(ms / 1000) % 60).padStart(2, '0')}`;
-    setTimeout(() => showOverlay(`${BIG[P.big].label} board clear`, '', `${P.moves} moves, par ${P.par}.<br/>Time ${t}${isBest ? ', a new best.' : '.'}`,
+    const sz = P.big;
+    setTimeout(() => mode === 'pipes' && P.big === sz && P.solved && showOverlay(`${BIG[P.big].label} board clear`, '', `${P.moves} moves, par ${P.par}.<br/>Time ${t}${isBest ? ', a new best.' : '.'}`,
       [{ label: 'Sizes', alt: true, fn: pickBig }, { label: 'New board', fn: () => loadBig(P.big) }]), 900);
   } else if (mode === 'pipes') {
     const stars = P.moves <= P.par ? 3 : P.moves <= Math.ceil(P.par * 1.5) ? 2 : 1;
@@ -1891,6 +2003,7 @@ function pipesSolved() {
     pipeProgress.level = P.level + 1;
     store.set('atlas.pipes2', pipeProgress);
     setTimeout(() => {
+      if (mode !== 'pipes' || P.big || !P.solved) return;
       showOverlay(`Level ${P.level} clear`, '★'.repeat(stars) + '☆'.repeat(3 - stars),
         `${P.moves} moves, par ${P.par}.<br/>Three stars means par or better.`,
         [{ label: 'Replay', alt: true, fn: () => loadLevel(P.level) }, { label: 'Next', fn: () => loadLevel(P.level + 1) }],
@@ -1915,7 +2028,8 @@ const LEVELS = {
   6: { grid: 'hex', cols: 5, rows: 6, rocks: 3 },
   7: { grid: 'square', cols: 5, rows: 6, bridges: 1, title: 'Bridges', intro: 'A bridge carries two pipes straight across each other without mixing. Both crossings have to carry flow.' },
   8: { grid: 'oct', cols: 3, rows: 4, title: 'Octagons', intro: 'Big octagons turn in eighths. The small diamonds between them turn in quarters.' },
-  9: { grid: 'square', cols: 6, rows: 7, rocks: 3, bridges: 1, fixed: 3, title: 'Pinned tiles', intro: 'Tiles with rivets are pinned in the right position. Use them as clues.' }
+  9: { grid: 'square', cols: 6, rows: 7, rocks: 3, bridges: 1, fixed: 3, title: 'Pinned tiles', intro: 'Tiles with rivets are pinned in the right position. Use them as clues.' },
+  10: { grid: 'square', cols: 6, rows: 7, rocks: 2, valves: 3, title: 'Check valves', intro: 'Arrow tiles are one way valves. Flow only passes in the direction the arrow points, so turning one backwards cuts off everything past it.' }
 };
 function levelConfig(lv) {
   const style = PIPE_STYLE_KEYS[(lv - 1) % PIPE_STYLE_KEYS.length];
@@ -1931,6 +2045,7 @@ function levelConfig(lv) {
     grid, cols, rows, style,
     rocks: Math.round(cells * 0.07),
     bridges: (grid === 'square' || grid === 'oct') ? Math.min(1 + g, 3) : 0,
+    valves: grid === 'tri' ? 0 : Math.max(1, Math.round(cells * 0.04)),
     fixed: Math.round(cells * 0.04)
   };
 }
@@ -1966,7 +2081,7 @@ function loadBig(size) {
   const [cols, rows] = b[grid];
   const cells = cols * rows + (grid === 'oct' ? (cols - 1) * (rows - 1) : 0);
   P.big = size;
-  generatePipes({ grid, cols, rows, rocks: Math.round(cells * 0.06), bridges: (grid === 'square' || grid === 'oct') ? b.bridges : 0, fixed: Math.round(cells * 0.03) },
+  generatePipes({ grid, cols, rows, rocks: Math.round(cells * 0.06), bridges: (grid === 'square' || grid === 'oct') ? b.bridges : 0, valves: grid === 'tri' ? 0 : Math.round(cells * 0.03), fixed: Math.round(cells * 0.03) },
     mulberry(Date.now() & 0xffffffff));
   P.bigStart = Date.now();
   renderPipes();
@@ -1987,8 +2102,8 @@ const RUSH_SIZES = [
   { grid: 'square', cols: 4, rows: 4 }, { grid: 'square', cols: 4, rows: 5 }, { grid: 'hex', cols: 4, rows: 5 },
   { grid: 'square', cols: 5, rows: 5, rocks: 2 }, { grid: 'tri', cols: 9, rows: 5 }, { grid: 'hex', cols: 5, rows: 6, rocks: 2 },
   { grid: 'oct', cols: 3, rows: 4 }, { grid: 'square', cols: 5, rows: 6, bridges: 1, rocks: 2 }, { grid: 'tri', cols: 11, rows: 6, rocks: 3 },
-  { grid: 'hex', cols: 5, rows: 7, rocks: 3 }, { grid: 'oct', cols: 4, rows: 5, bridges: 1 }, { grid: 'square', cols: 6, rows: 8, rocks: 3, bridges: 2 },
-  { grid: 'tri', cols: 13, rows: 7, rocks: 4 }, { grid: 'hex', cols: 6, rows: 8, rocks: 4 }, { grid: 'oct', cols: 4, rows: 6, rocks: 2, bridges: 2 }
+  { grid: 'hex', cols: 5, rows: 7, rocks: 3, valves: 2 }, { grid: 'oct', cols: 4, rows: 5, bridges: 1, valves: 2 }, { grid: 'square', cols: 6, rows: 8, rocks: 3, bridges: 2, valves: 2 },
+  { grid: 'tri', cols: 13, rows: 7, rocks: 4 }, { grid: 'hex', cols: 6, rows: 8, rocks: 4, valves: 3 }, { grid: 'oct', cols: 4, rows: 6, rocks: 2, bridges: 2, valves: 3 }
 ];
 function newRushBoard() {
   const s = RUSH_SIZES[Math.min(R.boards, RUSH_SIZES.length - 1)];
@@ -2004,7 +2119,9 @@ function startRush() {
   newRushBoard();
   R.timer = setInterval(() => {
     const now = performance.now();
+    const prevT = R.time;
     if (!P.solved) R.time -= (now - R.last) / 1000;
+    if (R.time <= 10 && R.time > 0 && Math.ceil(R.time) < Math.ceil(prevT)) sfx.tick();
     R.last = now;
     if (R.time <= 0) { R.time = 0; endRush(); }
     refreshStats();
@@ -2016,6 +2133,7 @@ function stopRush() {
 }
 function endRush() {
   stopRush();
+  sfx.timeup();
   const best = Math.max(store.get('atlas.rushBest', 0), R.boards);
   store.set('atlas.rushBest', best);
   showOverlay('Time', '', `Boards cleared: ${R.boards}<br/>Best run: ${best}`,
@@ -2184,7 +2302,21 @@ overlay.addEventListener('click', e => { if (e.target === overlay) hideOverlay()
    colors each code slot to match its dot. Hard mode hides the order and
    each try reports how many digits sit in the right place. */
 const VAULT_COLORS = ['#c0392b', '#2e6ac4', '#3a8a4a', '#d49a1a', '#8a4ab0'];
-const VAULT = { active: false, spots: [], entry: [], guesses: 0, done: false, hard: store.get('atlas.vaultHard', false), msg: '' };
+const VAULT_DIFFS = [
+  { label: 'Easy', colors: 5, mult: 1 },
+  { label: 'Medium', colors: 3, mult: 1.5 },
+  { label: 'Hard', colors: 2, mult: 2 },
+  { label: 'Expert', colors: 1, mult: 3 }
+];
+const VAULT = { active: false, spots: [], entry: [], guesses: 0, done: false, diff: store.get('atlas.vaultDiff', store.get('atlas.vaultHard', false) ? 3 : 0), msg: '' };
+function slotColors() {
+  // Which color sits over each code slot. Fewer colors means repeats,
+  // so a color only narrows down where a digit can go.
+  const k = VAULT_DIFFS[VAULT.diff].colors;
+  const idx = [0, 1, 2, 3, 4].map(i => i % k);
+  for (let i = idx.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [idx[i], idx[j]] = [idx[j], idx[i]]; }
+  return idx.map(i => VAULT_COLORS[i]);
+}
 const vaultEl = document.getElementById('vault');
 const chipsEl = document.getElementById('vaultChips');
 const slotsEl = document.getElementById('vaultSlots');
@@ -2217,6 +2349,8 @@ function setupVault() {
   // Every junction that can light gets a blank ring. Five hide a digit,
   // the rest are decoys, and only cracking a ring shows which it is.
   VAULT.rings = [];
+  VAULT.ready = false;
+  VAULT.colors = slotColors();
   const R = TILE_SIZE * 0.24;
   allC.forEach(v => {
     const i = chosen.indexOf(v);
@@ -2236,14 +2370,19 @@ function setupVault() {
     board.appendChild(g);
     const ringObj = { vg: v, tiles: tl, g, ring, pips, found: false, real: i >= 0 };
     if (i >= 0) {
-      Object.assign(ringObj, { color: VAULT_COLORS[i], digit: digits[i] });
+      Object.assign(ringObj, { color: VAULT.colors[i], digit: digits[i] });
       VAULT.spots[i] = ringObj;
     }
     VAULT.rings.push(ringObj);
   });
   VAULT.spots = VAULT.spots.filter(Boolean);
+  // Chips are listed in a shuffled order so their position never gives away the code.
+  VAULT.chipOrder = VAULT.spots.map((_, i) => i);
+  for (let i = VAULT.chipOrder.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [VAULT.chipOrder[i], VAULT.chipOrder[j]] = [VAULT.chipOrder[j], VAULT.chipOrder[i]]; }
+  if (VAULT.chipOrder.every((v, i) => v === i) && VAULT.chipOrder.length > 1) VAULT.chipOrder.reverse();
   renderVaultPanel();
   updateVault();
+  VAULT.ready = true;
   updateHint();
 }
 
@@ -2263,8 +2402,10 @@ function updateVault() {
         s.ring.style.fill = s.color;
         s.ring.style.stroke = s.color;
         if (navigator.vibrate) navigator.vibrate(30);
+        if (VAULT.ready) sfx.digit();
       } else {
         s.g.classList.add('empty');
+        if (VAULT.ready) sfx.decoy();
       }
     }
   });
@@ -2276,7 +2417,8 @@ function renderVaultPanel() {
   if (!VAULT.active) return;
   chipsEl.innerHTML = '';
   slotsEl.innerHTML = '';
-  VAULT.spots.forEach((s, i) => {
+  (VAULT.chipOrder || VAULT.spots.map((_, i) => i)).forEach(i => {
+    const s = VAULT.spots[i];
     const c = document.createElement('button');
     const usedHere = VAULT.entry.includes(i);
     c.className = 'chip' + (s.found ? ' found' : '') + (usedHere ? ' used' : '');
@@ -2293,7 +2435,7 @@ function renderVaultPanel() {
   VAULT.spots.forEach((_, i) => {
     const sl = document.createElement('button');
     sl.className = 'slot';
-    if (!VAULT.hard) sl.style.borderColor = VAULT_COLORS[i];
+    sl.style.borderColor = VAULT.colors[i];
     const idx = VAULT.entry[i];
     if (idx !== undefined) {
       sl.textContent = VAULT.spots[idx].digit;
@@ -2324,13 +2466,16 @@ function tryUnlock() {
     renderVaultPanel();
     const code = VAULT.spots.map(s => s.digit).join(' ');
     const secs = Math.round((Date.now() - VAULT.started) / 1000);
-    const vscore = Math.max(1, 1000 - 100 * (VAULT.guesses - 1) - Math.floor(secs / 3));
-    showOverlay('Vault cracked', '', `Code ${code}<br/>${VAULT.guesses === 1 ? 'First try' : `${VAULT.guesses} tries`}, ${secs} seconds.<br/>Vault score ${vscore}.`,
+    const base = Math.max(1, 1000 - 100 * (VAULT.guesses - 1) - Math.floor(secs / 3));
+    const vscore = Math.max(1, Math.round(base * VAULT_DIFFS[VAULT.diff].mult));
+    sfx.unlock();
+    showOverlay('Vault cracked', '', `Code ${code}<br/>${VAULT.guesses === 1 ? 'First try' : `${VAULT.guesses} tries`}, ${secs} seconds.<br/>${VAULT_DIFFS[VAULT.diff].label} vault score ${vscore}.`,
       [{ label: 'New vault', fn: () => { hideOverlay(); buildBoard(); } }],
       { game: 'tile-spinner-vault', score: vscore, duration: Date.now() - VAULT.started });
     return;
   }
   VAULT.msg = `${placed} of ${VAULT.spots.length} in the right place.`;
+  sfx.wrong();
   VAULT.entry = [];
   slotsEl.classList.remove('shake'); void slotsEl.offsetWidth; slotsEl.classList.add('shake');
   renderVaultPanel(); updateHint();
@@ -2351,7 +2496,10 @@ function buildControls() {
   if (mode === 'play') {
     makeBtn('Shuffle', shuffleBoard, { alt: true });
     makeBtn('Reset', buildBoard);
-    if (currentStyle.kind === 'escher') makeBtn('Hard', () => { VAULT.hard = !VAULT.hard; store.set('atlas.vaultHard', VAULT.hard); renderVaultPanel(); updateHint(); buildControls(); }, { alt: true, on: VAULT.hard });
+    if (currentStyle.kind === 'escher') makeBtn(VAULT_DIFFS[VAULT.diff].label, () => {
+      VAULT.diff = (VAULT.diff + 1) % VAULT_DIFFS.length; store.set('atlas.vaultDiff', VAULT.diff);
+      buildBoard(); buildControls();
+    }, { alt: true, on: VAULT.diff > 0 });
   } else if (mode === 'pipes' && P.big) {
     makeBtn('Levels', () => loadLevel(pipeProgress.level || 1), { alt: true });
     makeBtn('New', () => loadBig(P.big), { alt: true });
@@ -2462,6 +2610,13 @@ function buildDrawer() {
 function openDrawer() { drawer.classList.add('open'); backdrop.classList.add('open'); }
 function closeDrawer() { drawer.classList.remove('open'); backdrop.classList.remove('open'); }
 document.getElementById('menuBtn').addEventListener('click', openDrawer);
+const soundBtn = document.getElementById('soundBtn');
+soundBtn.classList.toggle('off', !SND.on);
+soundBtn.addEventListener('click', () => {
+  SND.on = !SND.on; store.set('atlas.sound', SND.on);
+  soundBtn.classList.toggle('off', !SND.on);
+  if (SND.on) sfx.click();
+});
 backdrop.addEventListener('click', closeDrawer);
 
 let resizeTimer, lastW = 0, lastH = 0;
